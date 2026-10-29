@@ -1,0 +1,34 @@
+# Dependabot, from dev-standards templates/dependabot.yml (origin/main cfa6e80, 2026-10-28).
+# Only the github-actions entry is carried: this repository has no NuGet project, no package.json and
+# no Dockerfile, so the template's nuget, npm and docker entries would have nothing to update. The PR
+# that adds a first manifest adds its entry from the template.
+#
+# cooldown (EVERY entry): supply-chain guard - a newly published version waits 14 days before Dependabot
+# proposes it, so a hijacked or bad release has time to be caught and pulled first. The 14 days matches
+# DEV-STANDARDS C3's release-age rule (a third-party release is adopted only once it is at least 14 days
+# old), so a version-update PR arrives already old enough to take; it is the same idea as J6's registry-age
+# check, which J6 itself applies to newly ADDED dependencies. Dependabot's implicit default is 3 days, which
+# zizmor's dependabot-cooldown audit flags. Per GitHub's docs cooldown applies to VERSION updates only: a
+# SECURITY update (an advisory-backed fix) is still not delayed, but only if Dependabot security updates
+# are turned on for the repo (dev-standards templates/README.md, step 6); a fix with no advisory waits like
+# any other version. Merging an undelayed security update is governed by C3's own security-fix exception
+# (72 hours, and the conditions it lists), not by this cooldown. default-days covers every update type; the
+# semver-major/minor/patch-days overrides exist (nuget and npm, not github-actions) and are left unset.
+version: 2
+updates:
+  # github-actions is NOT optional (C4 + CI-audit HIGH#1): the CI templates SHA-pin every third-party
+  # action, and a SHA pin is frozen by definition - it never picks up the upstream security fix on its
+  # own. This ecosystem is what re-opens those pins, so it is the maintenance half of the pinning rule.
+  # Dependabot rewrites the pinned SHA and updates the trailing `# vX.Y.Z` comment with it.
+  # NOTE it does NOT track the tool versions/checksums in the CI templates' env block (TRIVY_VERSION,
+  # ZIZMOR_SHA256, ...) - those are plain env strings. Bump those deliberately, hash and all.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    cooldown:
+      default-days: 14
+    groups:
+      actions-all:
+        patterns: ["*"]

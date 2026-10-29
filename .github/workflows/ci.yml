@@ -1,0 +1,1485 @@
+# CI: the secret scan and the security gates. This repository has no build code, only README.md and
+# SECURITY.md (pointers to private vulnerability reporting), so it runs the template's scanning jobs and
+# nothing else.
+# SOURCE: dev-standards templates/ci-hosted.yml, origin/main cfa6e80 (2026-10-28). The triggers,
+# concurrency, permissions, the security-gate env block and the `secrets`, `secrets-issue` and
+# `security` jobs are the template's, unchanged except for runs-on.
+# EVERY DIFFERENCE FROM THE TEMPLATE:
+#   * the template's `dotnet` and `web` jobs are not carried: there is no .NET project and no frontend
+#     here, so they would have nothing to build or test. The PR that adds product code adopts its build
+#     jobs from the template then.
+#   * the template's EDIT PER REPO env block (DOTNET_TARGET, LICENSE_TARGET, TEST_TARGET, TEST_ALLOW_ZERO,
+#     FRONTEND_DIR, LOCKFILE_GATE_EXCLUDE) is not carried: only those two jobs read it.
+#   * two header comments that described those two jobs are reworded to match: the npm audit note in
+#     C5 and the list of jobs that skip the schedule in SECRET-SCAN SCOPE.
+#   * runs-on is the literal `ubuntu-latest` on every job, never the template's CI_RUNS_ON expression,
+#     because this repository is PUBLIC. RUNNER SELECTION and NO PERSISTENT-RUNNER HARDENING below are
+#     rewritten to say so, and each runs-on line carries its own comment.
+# On a pull request the checks are `secrets` and `security`. `secrets-issue` acts only on the weekly
+# sweep or a manual dispatch, so a pull request shows it as skipped.
+# This history has no octopus merge, and it was pre-scanned with `--all --remerge-diff` on 2026-10-28
+# before adopting the scan, as ADOPTING THIS TEMPLATE below asks: 1 commit, 1 scanned, no leaks.
+#
+# RUNNER SELECTION, THIS REPO'S AND NOT THE TEMPLATE'S: every job runs on GitHub-hosted `ubuntu-latest`,
+# written as a literal. The template's runs-on is ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }},
+# which a CI_RUNS_ON variable can point at a self-hosted pool. This repository is PUBLIC: anyone can open
+# a pull request against it, and a pull request from a fork must never run on a self-hosted runner. The
+# organization CI_RUNS_ON variable is scoped to private repositories and the pool's runner group refuses
+# public ones; the literal takes the variable out of the question, so no repository or organization
+# variable can move these jobs. ubuntu-latest is a fresh X64 VM per job and carries bash, git >= 2.43,
+# curl, tar + gzip, sha256sum, node, python3-venv + pipx and pwsh. Scanners the runner image
+# preinstalls are never used: every scanner is downloaded and verified (or pipx-installed into the job's
+# own directory) here. The env block's *_ARM64 pins stay as the template ships them and go unused here.
+#
+# C5 (security gates): the `security` job runs SCA (OSV-Scanner) + SAST (Semgrep OSS) + PowerShell
+# (PSScriptAnalyzer). It REPLACES the retired third-party SCA job AND the old fail-open `dotnet list package
+# --vulnerable` NuGet gate — both did SCA, and OSV-Scanner supersedes them because its exit code is
+# trustworthy (0 clean / 1 vulnerabilities / anything else = the scan could not run), so the gate keys
+# off the exit code, never scraped console prose. Dependabot (templates/dependabot.yml) files the
+# dependency-update PRs. The template's second npm check, `npm audit` in its web job, is not carried here.
+#
+# TRIGGER STRATEGY: push runs ONLY for the default branch (on.push.branches is the FIXED list
+# [main, master] on ONE marker line, byte-identical across the fleet); every other change runs through
+# the pull_request trigger, plus workflow_dispatch and the weekly schedule. A feature-branch push no
+# longer runs CI by itself - its commits are scanned by the PR that proposes them - so total runs go
+# down. The secrets job FAILS CLOSED on every event if the repository's default branch is not in that
+# list, because then a push to the default branch would run NOTHING (the no-run gap). A tag push does
+# not run this workflow: with only `branches:` under push, GitHub does not fire it for tags. The secrets
+# job also FAILS CLOSED if `push:` carries any key but `branches:` (tags, paths, paths-ignore,
+# branches-ignore, ...): each changes which pushes run CI, so the list would no longer be the whole answer.
+# DEFAULT BRANCH SOURCE, DELIBERATELY DIFFERENT FROM ci-selfhosted.yml (security gate ruling 2026-09-26):
+# this template's no-run-gap check reads the default branch from the event payload only;
+# ci-selfhosted.yml reads it from the REST API with the payload as a cross-check. Both are deliberate. Do
+# not "align" them in either direction.
+# NO PERSISTENT-RUNNER HARDENING HERE, AND WHY: ubuntu-latest is a fresh VM per job, so no earlier job can
+# leave git config, attribute files or refs/replace behind (ci-selfhosted.yml neutralises and refuses
+# those).
+# What a fresh VM does not cover is code that runs in THIS job before the scan: as shipped the
+# secrets job runs nothing from the repository before gitleaks (checkout, then this template's own
+# checks). Never add a step that runs repository code (a build, a script, a local action) ahead of the
+# scan in this job: it could write .git/info/attributes, git config or refs/replace and blind the scan.
+# SECRET-SCAN SCOPE BY EVENT, every arm with --remerge-diff (a secret typed into a merge CONFLICT
+# RESOLUTION, present in neither parent, is scanned; git >= 2.43 is asserted): a push to the default
+# branch scans its FULL HISTORY (HEAD), not the pushed range; a pull_request scans the proposed range
+# (origin/<base>..HEAD); the weekly schedule (and a manual workflow_dispatch) scans EVERY REF IN THE
+# CLONE (--all), so a NEWER gitleaks ruleset gets applied to history that already passed under the old
+# rules INCLUDING branches nobody has pushed to since. The security job skips the scheduled run.
+#
+# ADOPTING THIS TEMPLATE (per repo, and again on every GITLEAKS_VERSION bump):
+#   * --remerge-diff reads merge resolutions no earlier scan read, so pre-scan first. Use git >= 2.43, or
+#     the pre-scan can false-clean (git 2.41/2.42 crash under --remerge-diff with GIT_ATTR_SOURCE, and
+#     gitleaks still exits 0):
+#     `GIT_ATTR_SOURCE=$(git hash-object -t tree /dev/null) GIT_ATTR_NOSYSTEM=1 XDG_CONFIG_HOME=$(mktemp -d)
+#     gitleaks git . --no-banner --redact --log-level debug --report-path pre.json
+#     "--log-opts=--all --remerge-diff" 2> pre.log` (the attribute handling the scan uses). The pre-scan
+#     counts only if `grep -E 'DBG.*executing: .* log -p' pre.log` matches (gitleaks really started git,
+#     so the next check is live) and `grep -E 'command aborted|exit status' pre.log` does not. Triage the
+#     findings in merge commits, rotate the real ones, and add fingerprints for confirmed false ones -
+#     a remerge-diff finding's path carries a `b/` prefix, so widen anchored path allowlists to
+#     ^(b/)?... Time that --all sweep on the repo against this job's 30-minute timeout.
+#     Count octopus merges first: `git rev-list --all --min-parents=3 --count`. Any above 0 turns the
+#     sweep red permanently (the scan fails closed on them), so decide how to handle them BEFORE adopting.
+#   * Require CODEOWNERS review on .github/workflows/**, .gitleaks.toml and .gitleaksignore: gitleaks
+#     trusts whatever config and ignore file the pull request itself supplies.
+# KNOWN RESIDUALS OF THIS DESIGN (ruled; named so nobody mistakes them for coverage):
+#   * push runs only for [main, master]: a secret on a branch that is force-pushed away before any PR
+#     or weekly sweep reads it is never reported.
+#   * no merge_group trigger: a repo that turns on a merge queue must add one, or the queue stalls.
+#   * pull_request runs on its default types (opened, synchronize, reopened); `edited`, which covers a
+#     base-branch change, does not re-run the scan.
+#   * the tag arm is unreachable as shipped (no `tags:` filter, and adding one fails the no-run-gap
+#     check); commits reachable only from a tag are covered by the weekly --all sweep.
+#   * an octopus merge (3+ parents) cannot be re-merged, so the scan fails closed on one (exit 2).
+name: CI
+
+on:
+  push:
+    branches: [main, master]   # ci-push-branches-marker: FIXED, one line; the secrets job fails closed unless the default branch is listed here
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 6 * * 1"   # Mondays 06:00 UTC — full-history secret scan
+
+concurrency:
+  # Estate rule: cancel SUPERSEDED pull_request runs only, NEVER a default-branch push, a dispatch or a
+  # schedule run. A pull_request run shares its group with newer runs of the same PR (the ref is
+  # refs/pull/<n>/merge) and is cancelled by them. Every other event gets a group of its own (its run_id),
+  # so nothing cancels it and it cancels nothing - a cancelled run is not evidence in either direction.
+  group: ci-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  # ---- SECURITY-GATE CONFIG (C5) — tool versions/thresholds are config, never hardcoded in logic (H1) ----
+  # OSV-Scanner scans the WHOLE checkout recursively, so every manifest that ships is covered without a
+  # per-project scope knob — the old CVE_TARGETS problem (a scan that walks only one project's closure)
+  # cannot occur. NuGet needs a committed packages.lock.json (RestorePackagesWithLockFile=true) for
+  # transitive coverage; without one only direct PackageReferences resolve. Versions verified current
+  # 2026-08-07 (google/osv-scanner v2.5.0; Semgrep OSS 1.172.0); Dependabot does not bump these — bump deliberately.
+  OSV_SCANNER_VERSION: "2.5.0"
+  # Fail at or above this CVSS band: any | low | medium | high | critical. `any` = fail on every finding
+  # (the default and the right posture); a package group whose CVSS score is missing always counts as a finding.
+  OSV_SEVERITY_THRESHOLD: any
+  SEMGREP_VERSION: "1.172.0"
+  # Registry rulesets (space-separated, free, no token). The step ALSO auto-adds `--config .semgrep/` when the
+  # repo has a .semgrep/ dir (the security-coding rollout drops canonical custom rules there), absent-safe.
+  SEMGREP_CONFIG: p/default   # e.g. "p/security-audit p/secrets p/csharp p/javascript p/typescript"
+  # THERE IS NO SEVERITY KNOB, DELIBERATELY. `--severity` FILTERS rather than setting a floor, so a
+  # single-severity run does not contain the other severities at all. The step therefore asks for BOTH
+  # in ONE scan (`--severity ERROR --severity WARNING`) and decides from the JSON report: ERROR results
+  # FAIL the job, WARNING results are echoed as ::warning:: annotations and never block. The policy is
+  # fixed because it is the standard (C5), not a per-repo preference; INFO is not requested at all.
+  # Semgrep's default per-rule timeout is 5s. A rule that exceeds it on one file is ABANDONED for that
+  # file and the run still exits 0 with no finding from it: a green check produced by not looking. It
+  # hid a real ERROR plus three LDAP DN-concat findings in a service in this fleet. --timeout-threshold 0
+  # removes the "skip the whole file after N timed-out rules" cap, so a slow file is never dropped
+  # wholesale either. 300s is not padding: taint-mode rules on a 1-2k line C# file exceed 30s, and the
+  # file is then counted clean. Both are config (H1); raise the timeout, never shrink the coverage.
+  SEMGREP_TIMEOUT: "300"          # per-rule, per-file seconds. Integer.
+  SEMGREP_TIMEOUT_THRESHOLD: "0"  # 0 = no limit on timed-out rules per file. Integer.
+  PSSA_VERSION: "1.24.0"      # PSScriptAnalyzer; only runs on repos containing .ps1/.psm1
+  PSSA_SECURITY_RULES: ""     # '' => the curated security-rule default in the step; override to tune
+  # ---- IaC / workflow SAST gate config (added 2026-08-08; H1 config-driven) ----
+  GITLEAKS_VERSION: "8.30.1"       # secret scanner; the SAME pin ci-selfhosted.yml uses. Verified current 2026-08-08
+  TRIVY_VERSION: "0.73.0"          # Trivy IaC/misconfig scanner. Verified current 2026-08-08
+  TRIVY_SEVERITY: "HIGH,CRITICAL"  # comma-separated Trivy severities that FAIL the config gate
+  ZIZMOR_VERSION: "1.29.0"         # zizmor GitHub Actions workflow-security auditor. Verified current 2026-08-08
+  ZIZMOR_MIN_SEVERITY: medium      # gate at/above this zizmor severity; 'medium' catches template-injection,
+                                   # unpinned-uses AND artipacked. VERIFIED against zizmor 1.29.0, do not assume
+                                   # otherwise: its unpinned-uses policy is BLANKET - `actions/checkout@v4` is a HIGH
+                                   # finding just like any third-party tag, so EVERY `uses:` below is pinned to a
+                                   # commit SHA; and artipacked (medium) fires on any checkout omitting
+                                   # persist-credentials:false, so every actions/checkout below sets it. This
+                                   # template passes its own gate at 'medium' (verified 2026-08-08).
+  ACTIONLINT_VERSION: "1.7.12"     # actionlint workflow-correctness linter (best-effort, non-gating). Verified 2026-08-08
+  # ---- SHA-256 of every binary DOWNLOADED FROM A GITHUB RELEASE (CI-audit HIGH#1). Each ARCHIVE is verified
+  #      BEFORE the binary is extracted or executed; a mismatch FAILS the job closed. A hosted runner (and a
+  #      CI_RUNS_ON pool runner, which must be one-job) is ephemeral, so there is no tool cache to poison and the fresh download is re-verified on every run - but a
+  #      compromised release asset, a poisoned mirror or a MITM'd download is caught here all the same, and it
+  #      makes the supply chain auditable: every downloaded executable is pinned by CONTENT, not just a version
+  #      tag. Tools installed by a PACKAGE MANAGER are version-pinned but NOT hash-verified - see the residual-risk
+  #      note below. Bump each hash (BOTH architectures) WITH its version above.
+  #      Provenance: the published release checksum file for osv-scanner / gitleaks / Trivy / actionlint;
+  #      zizmor publishes no checksum file, so its pin is the SHA-256 of the release asset itself, computed
+  #      at pin time (2026-08-08). ----
+  #      ARCHITECTURE: each download step picks its release asset AND its pin by RUNNER_ARCH: X64 (ubuntu-latest)
+  #      takes *_SHA256, ARM64 (an arm64 CI_RUNS_ON pool) takes *_SHA256_ARM64, and any other value fails the
+  #      step closed before anything is downloaded. The ARM64 pins (added 2026-10-28) are for the SAME versions,
+  #      from the same official checksum files; zizmor's is the GitHub release-asset digest, confirmed by
+  #      downloading the asset and hashing it.
+  GITLEAKS_SHA256: "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"      # gitleaks_8.30.1_linux_x64.tar.gz
+  GITLEAKS_SHA256_ARM64: "e4a487ee7ccd7d3a7f7ec08657610aa3606637dab924210b3aee62570fb4b080"  # gitleaks_8.30.1_linux_arm64.tar.gz
+  OSV_SCANNER_SHA256: "edcfc41d257db36148f065055655fe3fcfc434b0b423ea67468a84c207524e0c"   # osv-scanner_linux_amd64 (v2.5.0)
+  OSV_SCANNER_SHA256_ARM64: "fe152e1a546af223e6c557cc3111a8bb3e5dc02fcbf7dbe95d26567c0f0041f2"  # osv-scanner_linux_arm64 (v2.5.0)
+  TRIVY_SHA256: "2edd39da482bb4e9831962487b68f68e3928ec3137794757f54d00383d79547b"         # trivy_0.73.0_Linux-64bit.tar.gz
+  TRIVY_SHA256_ARM64: "13833d97e8a1a5367471c372a173180157f593bece570e20d5d925fef552f5dd"   # trivy_0.73.0_Linux-ARM64.tar.gz
+  ZIZMOR_SHA256: "dd96df044a6e8538d5f423790f453bdd03d49e5b2bcc38214acc41a2f1297839"        # zizmor-x86_64-unknown-linux-gnu.tar.gz (v1.29.0)
+  ZIZMOR_SHA256_ARM64: "415eaa7c0a06479a701b8e44a3e812c1047decc848ec4bede7bd6bbf49f22d20"  # zizmor-aarch64-unknown-linux-gnu.tar.gz (v1.29.0)
+  ACTIONLINT_SHA256: "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8"    # actionlint_1.7.12_linux_amd64.tar.gz
+  ACTIONLINT_SHA256_ARM64: "325e971b6ba9bfa504672e29be93c24981eeb1c07576d730e9f7c8805afff0c6"  # actionlint_1.7.12_linux_arm64.tar.gz
+  # ---- DOWNLOAD RETRY: the TRANSFER is retried, never the verification. Every pinned-binary download in this
+  #      file (gitleaks, osv-scanner, Trivy, zizmor, actionlint) is
+  #      `curl -sSfL --connect-timeout 10 --speed-limit 1024 --speed-time 30 --retry 3 --retry-all-errors
+  #      --retry-delay 2 --retry-max-time 60`. An attempt fails when it cannot connect within 10 s, or when it
+  #      moves less than 1024 bytes/s for 30 s in a row (a server that never answers, or answers and then
+  #      stalls); a slow but moving download is NOT cut off, since there is no total time cap. A failed attempt
+  #      (a 5xx, a reset, a stall) is retried up to 3 times, 2 s apart, and no retry starts once 60 s have
+  #      passed, so a persistent outage or a stalled mirror fails the step closed in about a minute (a stall:
+  #      two 30 s attempts). --fail (the f in -sSfL) stays, so an HTTP error is a failed attempt, never an error
+  #      page saved as the archive. The SHA-256 check above runs ONCE, after the transfer, and is never
+  #      retried: a mismatch is a signal, not a blip. semgrep is installed by pipx, not downloaded as a pinned
+  #      binary, so it is not covered here. ----
+  # RESIDUAL RISK (CI-audit MED): four tools are installed by a PACKAGE MANAGER and are version-pinned but NOT
+  #   hash-verified - the package manager resolves and runs them: semgrep (pipx install), PSScriptAnalyzer
+  #   (Install-Module, PSGallery), nuget-license (dotnet tool, NuGet.org), license-checker (npx, npm registry).
+  #   Content-pinning them would mean vendoring or a lockfile per tool; accepted as residual risk because each
+  #   pulls from a first-party registry over TLS and is version-pinned. Revisit if a registry compromise is in scope.
+  # Path to the local-ai CLI (local_ai_cli.py) for the ATT&CK enrichment. Instance-specific, so it is
+  # config not a literal (H1); unset on hosted/service-account runners, where the enrichment self-skips.
+  LOCALAI_CLI: ""
+
+jobs:
+  secrets:
+    runs-on: ubuntu-latest   # a literal, never the CI_RUNS_ON expression: this repository is PUBLIC (see RUNNER SELECTION in the header)
+    timeout-minutes: 30
+    outputs:
+      # "true" when the secret scan FOUND secrets (its exit 1). Read by secrets-issue, below, on a sweep.
+      found: ${{ steps.gitleaks.outputs.found }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262   # v4.4.0 — SHA-pinned (C4 + zizmor unpinned-uses); Dependabot github-actions bumps this
+        with:
+          # persist-credentials:false (zizmor artipacked, medium) - keep the GITHUB_TOKEN out of .git/config so a
+          # later step cannot read it. gitleaks still scans full LOCAL history (the object store), so unaffected.
+          persist-credentials: false
+          # `fetch-depth: 0` IS THE GATE, not a tuning knob (C1). actions/checkout defaults to depth 1,
+          # and gitleaks can only scan the commits it was given: at depth 1 it sees the tip and nothing
+          # else, so a credential that was committed and later deleted — the exact thing history
+          # scanning exists to catch — is invisible while the check still reports GREEN. A shallow
+          # secret scan is a scan of nothing. NEVER remove this line or lower the value.
+          fetch-depth: 0
+      - name: Assert the push trigger covers the default branch (no-run gap)
+        # on.push.branches is a FIXED list ([main, master], the marker line at the top of this file). If
+        # the repository's default branch is not in it, a push to the default branch runs NOTHING: no
+        # red check, no green check, only an absence nobody notices. No step can run on a push that
+        # never fires, so this one runs on EVERY event that does (pull_request, workflow_dispatch,
+        # schedule, pushes to a listed branch) and fails there. It also fails when the marker line is
+        # missing, duplicated or not directly under `push:`, or when `push:` has any key but `branches:`
+        # (tags, paths, paths-ignore, branches-ignore, ... each changes which pushes run), because then
+        # the list it checks is not provably the list GitHub reads.
+        # DELIBERATELY DIFFERENT SOURCE FROM ci-selfhosted.yml (security gate ruling 2026-09-26): see the
+        # header.
+        # WHERE THE DEFAULT BRANCH COMES FROM: the event payload, github.event.repository.default_branch,
+        # and nothing else. Measured resolving on push, tag push, pull_request, workflow_dispatch AND
+        # schedule. There is deliberately no fallback: an empty value on ANY event FAILS CLOSED, because
+        # an unresolved default branch is not a pass. Every refusal here exits 2 (could not run), never
+        # 1, which the scan step reserves for "found secrets".
+        env:
+          PAYLOAD_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -e
+          default_branch="${PAYLOAD_DEFAULT_BRANCH:-}"
+          source="event payload (github.event.repository.default_branch)"
+          if [ -z "$default_branch" ]; then
+            echo "::error::the repository's default branch did not resolve on this $GITHUB_EVENT_NAME event (github.event.repository.default_branch is empty), so this step cannot show that a push to the default branch runs CI at all. FAILING CLOSED: an unresolved default branch is not a pass."
+            exit 2
+          fi
+          echo "default branch: '$default_branch' (source: $source)."
+          # This workflow's own file: GITHUB_WORKFLOW_REF is <owner>/<repo>/<path>@<ref>.
+          wf="${GITHUB_WORKFLOW_REF#"$GITHUB_REPOSITORY"/}"
+          wf="${wf%%@*}"
+          if [ ! -f "$wf" ]; then
+            echo "::error::cannot read this workflow's own file '$wf' (from GITHUB_WORKFLOW_REF=$GITHUB_WORKFLOW_REF), so the push list cannot be checked. FAILING CLOSED."
+            exit 2
+          fi
+          # THE MARKER LINE: an uncommented `branches: [...]` key carrying the marker comment. Exactly one.
+          marker_re='^[[:space:]]+branches:[[:space:]]*\[[^]#]*\][[:space:]]+#[[:space:]]*ci-push-branches-marker'
+          n=$(grep -cE "$marker_re" "$wf" || true)
+          if [ "$n" != "1" ]; then
+            echo "::error::expected exactly ONE push-branches marker line (branches: [...]  # ci-push-branches-marker) in $wf, found $n. Without exactly one, the push list this step checks is not provably the list GitHub reads. FAILING CLOSED - restore the marker line from templates/ci-hosted.yml."
+            exit 2
+          fi
+          lineno=$(grep -nE "$marker_re" "$wf" | cut -d: -f1)
+          # The nearest preceding non-blank, non-comment line must be `push:`, or the marker sits under
+          # some other trigger and the real push filter is elsewhere.
+          prev=$(awk -v n="$lineno" 'NR < n && $0 !~ /^[[:space:]]*(#|$)/ { p = $0 } NR == n { print p; exit }' "$wf")
+          if ! printf '%s\n' "$prev" | grep -qE '^[[:space:]]+push:[[:space:]]*$'; then
+            echo "::error::the push-branches marker line (line $lineno of $wf) is not directly under 'push:' (the line above it is '$prev'), so it is not the push filter. FAILING CLOSED."
+            exit 2
+          fi
+          # `push:` MAY CARRY `branches:` AND NOTHING ELSE. Any other key (tags, tags-ignore, paths,
+          # paths-ignore, branches-ignore, ...) changes which pushes run this workflow, so the list would no
+          # longer be the whole answer. Every line indented deeper than `push:` up to the next line that is
+          # not is inside it; each at the first child indentation must be the one `branches:` key.
+          pushno=$(awk -v n="$lineno" 'NR < n && $0 !~ /^[[:space:]]*(#|$)/ { p = NR } NR == n { print p; exit }' "$wf")
+          awk -v s="$pushno" '
+            NR == s { match($0, /^[[:space:]]*/); pind = RLENGTH; next }
+            NR > s {
+              if ($0 ~ /^[[:space:]]*(#|$)/) next
+              match($0, /^[[:space:]]*/); ind = RLENGTH
+              if (ind <= pind) exit
+              if (cind == "") cind = ind
+              if (ind == cind) {
+                k = substr($0, ind + 1)
+                if (k ~ /^[^[:space:]#:][^#:]*:([[:space:]]|$)/) sub(/[[:space:]]*:.*$/, "", k)
+                print k
+              }
+            }' "$wf" > "$RUNNER_TEMP/push-keys.txt"
+          push_keys=$(tr '\n' ',' < "$RUNNER_TEMP/push-keys.txt" | sed 's/,$//')
+          n_branches=$(grep -cx 'branches' "$RUNNER_TEMP/push-keys.txt" || true)
+          n_other=$(grep -cvx 'branches' "$RUNNER_TEMP/push-keys.txt" || true)
+          if [ "$n_branches" != "1" ] || [ "$n_other" != "0" ]; then
+            echo "::error::on.push in $wf must carry exactly one key, branches:, and nothing else; found [$push_keys]. A tags, paths, paths-ignore or branches-ignore key changes which pushes run this workflow, so the push list is no longer the whole answer. FAILING CLOSED."
+            exit 2
+          fi
+          list=$(sed -n "${lineno}p" "$wf" | sed -E 's/^[^[]*\[([^]]*)\].*$/\1/')
+          printf '%s\n' "$list" | tr ',' '\n' > "$RUNNER_TEMP/push-branches.txt"
+          found=""
+          negated=""
+          while IFS= read -r item; do
+            item=$(printf '%s' "$item" | sed -E "s/^[[:space:]\"']+//; s/[[:space:]\"']+\$//")
+            if [ "$item" = "$default_branch" ]; then found=1; fi
+            case "$item" in '!'*) negated="$negated $item" ;; esac
+          done < "$RUNNER_TEMP/push-branches.txt"
+          # A negated entry ('!name') EXCLUDES branches, so a list carrying one no longer means "these run".
+          if [ -n "$negated" ]; then
+            echo "::error::the push-branches marker line (line $lineno of $wf) carries a negated entry [${negated# }], which excludes branches from CI. The list is FIXED at [main, master]. FAILING CLOSED."
+            exit 2
+          fi
+          if [ -z "$found" ]; then
+            echo "::error::NO-RUN GAP: the default branch '$default_branch' is not in on.push.branches [$list] (line $lineno of $wf), so a push to the default branch runs NO CI at all - not a red check, an absent one. FAILING CLOSED. Rename the default branch to main or master, or take this up as a template change; never edit the marker line per repo."
+            exit 2
+          fi
+          echo "push list [$list] (line $lineno of $wf) contains the default branch '$default_branch': a push to it runs CI."
+      - name: Assert git >= 2.43 (--remerge-diff on every arm; GIT_ATTR_SOURCE for the scan)
+        # Two features the scan depends on, each with a minimum git: --remerge-diff (2.36), without which
+        # merge conflict resolutions are not read, and GIT_ATTR_SOURCE (2.41, release notes 2.41.0 - NOT
+        # 2.40), without which a checked-out .gitattributes marking a path -diff or binary blinds the
+        # scan. An older git rejects the first (gitleaks then logs ERR and exits 0) and SILENTLY IGNORES
+        # the second, so nothing downstream would notice. The floor is 2.43, not 2.41: git 2.41.x and
+        # 2.42.x SEGFAULT under `log --remerge-diff` with GIT_ATTR_SOURCE at the first merge whose both
+        # sides changed (upstream fix e95bafc52f, first shipped in 2.43.0), and gitleaks does not check
+        # git's exit status, so the crash is a partial scan with rc 0 (measured with MinGit 2.42.0.2: the
+        # resolution secret missed, green). The version is asserted HERE, before the scan, and a version
+        # string this step cannot parse fails as well. Like every precondition step it exits 2 (could not
+        # run).
+        run: |
+          raw=$(git --version)
+          echo "$raw"
+          ver=$(printf '%s\n' "$raw" | sed -nE 's/^git version ([0-9]+)\.([0-9]+)([^0-9].*)?$/\1 \2/p')
+          if [ -z "$ver" ]; then
+            echo "::error::cannot parse '$raw' as a git version, so support for --remerge-diff with GIT_ATTR_SOURCE (git >= 2.43) is unproven. FAILING CLOSED."
+            exit 2
+          fi
+          major="${ver% *}"
+          minor="${ver#* }"
+          if [ "$major" -lt 2 ] || { [ "$major" -eq 2 ] && [ "$minor" -lt 43 ]; }; then
+            echo "::error::git $major.$minor is older than 2.43. The scan needs --remerge-diff (2.36) to read merge conflict resolutions and GIT_ATTR_SOURCE (2.41) so a checked-out .gitattributes cannot hide paths from it, and git 2.41/2.42 crash when the two are combined (fixed in 2.43.0) while gitleaks exits 0 on a partial scan. FAILING CLOSED - use a runner with git >= 2.43."
+            exit 2
+          fi
+          echo "git $major.$minor >= 2.43: --remerge-diff with GIT_ATTR_SOURCE is supported."
+      - name: Assert full history (C1 — a shallow secret scan is a scan of nothing)
+        # Belt and braces for the line above. `fetch-depth: 0` is one deletable line, and deleting it
+        # degrades the scan SILENTLY — the job still passes, just having checked almost nothing. This
+        # step turns that drift into a red build instead of a false green.
+        # Exit 2 on every refusal here: a precondition that fails means the scan COULD NOT RUN, which is
+        # never the same fact as exit 1 (the scan step's "found secrets").
+        run: |
+          shallow=$(git rev-parse --is-shallow-repository)
+          if [ "$shallow" != "false" ]; then
+            echo "::error::COULD NOT RUN: refusing to run a secret scan on a SHALLOW checkout (standard C1). This clone has no history, so the scan can only see the tip commit - a secret that was committed and later deleted would pass unnoticed, which is the entire reason history scanning exists. Restore 'fetch-depth: 0' on the actions/checkout step in this job."
+            exit 2
+          fi
+          # A PARTIAL clone (actions/checkout `filter:`) has every commit but not every blob: git fetches
+          # a missing blob lazily while gitleaks reads the log, and a failed lazy fetch surfaces only as an
+          # ERR line under a gitleaks exit 0. Refused outright rather than trusted to fail loudly. Any
+          # value of remote.origin.promisor other than a boolean false counts, so a malformed one fails too.
+          promisor=$(git config --get remote.origin.promisor || true)
+          promisor_bool=$(git config --type=bool --get remote.origin.promisor 2>/dev/null || true)
+          partialclone=$(git config --get extensions.partialclone || true)
+          if { [ -n "$promisor" ] && [ "$promisor_bool" != "false" ]; } || [ -n "$partialclone" ]; then
+            echo "::error::COULD NOT RUN: this checkout is a PARTIAL clone (remote.origin.promisor='${promisor}', extensions.partialclone='${partialclone}'), so blobs the scan must read are fetched lazily and a failed fetch would pass as clean. Remove 'filter:' from the actions/checkout step in this job (standard C1)."
+            exit 2
+          fi
+          # The number below is the SIZE OF THE CHECKED-OUT HISTORY, and it is labelled as such on
+          # purpose: it is NOT how many commits the secret scan reads. That number exists only in
+          # gitleaks' own log, and the scan step below prints it next to the rev-list size of the exact
+          # scope it scanned. Quoting this count as "scanned" reports a scope the scan never measured.
+          echo "Full history present: HEAD carries $(git rev-list --count HEAD) commits (git rev-list --count HEAD = checkout size, NOT the scanned count; the scan step reports gitleaks' own count) - the secret scan can see deleted secrets."
+      - name: Gitleaks secret scan (full history)
+        id: gitleaks
+        # The CLI, NOT gitleaks/gitleaks-action, and identical to the ci-selfhosted.yml step (same
+        # GITLEAKS_VERSION, same invocation) so a finding in one template is a finding in the other:
+        #   * the action fetches its own gitleaks binary with no checksum we control - CI-audit HIGH#1
+        #     requires every executable be content-pinned, and the CLI is the only way to do that here;
+        #   * the action scans only the PUSHED RANGE on push events and full history only on schedule.
+        #     This checkout is fetch-depth:0 and asserted above, so on a push the CLI scans the pushed
+        #     branch's FULL history (--log-opts=HEAD) on EVERY run rather than one range on one event -
+        #     strictly more coverage, and it removes the "did the schedule run?" dependency. A push run
+        #     is not every ref in the clone (see SCOPE below for why that distinction is the point);
+        #     the WEEKLY SCHEDULE is, so no branch escapes a newer ruleset just by sitting still;
+        #   * the action needs GITLEAKS_LICENSE on an ORGANIZATION account. Free on a personal account
+        #     today, a hard stop the day a repo moves into an org. The CLI has no such condition.
+        run: |
+          set -e
+          # EXIT CODES OF THIS STEP: 1 = gitleaks FOUND secrets. 2 = the scan COULD NOT RUN, or ran and
+          # produced a result this step cannot vouch for (download, gitleaks error, coverage checks
+          # below). They are opposite facts that render as the same red check, so each path says which
+          # one it is: a 2 is non-evidence to be fixed or re-run, never a finding to be rotated.
+          ver="${GITLEAKS_VERSION:-8.30.1}"
+          # Release asset AND pin by RUNNER_ARCH (see the env block): X64 = ubuntu-latest, ARM64 = an arm64
+          # CI_RUNS_ON pool. Any other architecture has no pinned asset, so it fails closed BEFORE downloading.
+          case "${RUNNER_ARCH:-}" in
+            X64)   asset="gitleaks_${ver}_linux_x64.tar.gz";   want="$GITLEAKS_SHA256" ;;
+            ARM64) asset="gitleaks_${ver}_linux_arm64.tar.gz"; want="$GITLEAKS_SHA256_ARM64" ;;
+            *)
+              echo "::error::gitleaks COULD NOT RUN: RUNNER_ARCH='${RUNNER_ARCH:-}' is neither X64 nor ARM64, so this template has no pinned gitleaks asset or SHA-256 for this runner. This is NOT a finding - nothing was scanned. FAILING CLOSED: run on ubuntu-latest or an X64/ARM64 CI_RUNS_ON pool."
+              exit 2 ;;
+          esac
+          # Defence in depth: never compare against an empty or malformed pin (an empty want would match an empty hash).
+          if ! printf '%s' "$want" | grep -Eq '^[0-9a-f]{64}$'; then echo "::error::gitleaks: the pinned SHA-256 for $asset is missing or malformed in the env block - refusing to download an unverifiable binary. FAILING CLOSED (C4/C5)."; exit 2; fi
+          if ! curl -sSfL --connect-timeout 10 --speed-limit 1024 --speed-time 30 --retry 3 --retry-all-errors --retry-delay 2 --retry-max-time 60 "https://github.com/gitleaks/gitleaks/releases/download/v${ver}/${asset}" -o "$RUNNER_TEMP/gitleaks.tgz"; then
+            echo "::error::gitleaks COULD NOT RUN: downloading gitleaks v${ver} ($asset) failed. This is NOT a finding - nothing was scanned. Re-run the job; if it persists, check the release URL and GITLEAKS_VERSION."
+            exit 2
+          fi
+          # CI-audit HIGH#1: verify the pinned SHA-256 BEFORE extracting/executing.
+          actual=$(sha256sum "$RUNNER_TEMP/gitleaks.tgz" | cut -d' ' -f1)
+          if [ "$actual" != "$want" ]; then
+            echo "::error::gitleaks COULD NOT RUN: download checksum mismatch for $asset: expected $want got $actual. Refusing to extract an unverified binary (CI-audit HIGH#1). This is NOT a finding. If GITLEAKS_VERSION was bumped, update GITLEAKS_SHA256 (X64) and GITLEAKS_SHA256_ARM64 (ARM64)."
+            exit 2
+          fi
+          if ! tar -xzf "$RUNNER_TEMP/gitleaks.tgz" -C "$RUNNER_TEMP" gitleaks; then
+            echo "::error::gitleaks COULD NOT RUN: extracting the verified archive failed. This is NOT a finding - nothing was scanned. Re-run the job."
+            exit 2
+          fi
+          chmod +x "$RUNNER_TEMP/gitleaks"
+          # SCOPE (C1). `gitleaks git .` with NO --log-opts walks EVERY ref the clone holds. That is
+          # harmless on a throwaway hosted runner and catastrophic on a persistent one, where
+          # refs/remotes/origin/* survives from every previous job: one real secret on one branch then
+          # fails every unrelated PR until it is rewritten out (two repos in this fleet died this way on
+          # a finding that belonged to neither). Both templates therefore scope the scan the same way,
+          # so a finding here is a finding there.
+          #
+          # SCOPE IS PER EVENT, and the schedule is the one that must NOT be narrowed:
+          #   * schedule / workflow_dispatch -> --log-opts=--all, EVERY ref in the clone, with NO stale-ref
+          #     cleanup. This is the run whose entire purpose is applying a NEWER gitleaks ruleset to
+          #     history that already passed under the old one, so scoping it to one branch would leave
+          #     every other branch permanently graded by whatever ruleset was current the day it was
+          #     pushed. Cleanup is skipped here for the same reason: it would delete exactly the refs
+          #     this run exists to read.
+          #   * tag push (GITHUB_REF_TYPE=tag) -> --log-opts=HEAD, no cleanup. Unreachable as shipped: GitHub
+          #     does not fire this workflow for a tag, because only `branches:` is set, and a `tags:` key
+          #     under push fails the no-run-gap check. Kept so both templates scope identically.
+          #     GITHUB_REF_NAME is a TAG name on this event, so "refs/remotes/origin/$GITHUB_REF_NAME"
+          #     matches nothing and the
+          #     cleanup would drop every remote-tracking branch including the one the tag sits on.
+          #   * pull_request -> origin/<base>..HEAD, the proposed range.
+          #   * push (the default branch only, see on.push.branches) -> --log-opts=HEAD, the branch's FULL
+          #     history (not the pushed range).
+          #   Every arm adds --remerge-diff; see REMERGE-DIFF below.
+          #
+          # STALE-REF CLEANUP IS LOCAL ONLY, AND DELIBERATELY SO. The obvious version of this is
+          # `git fetch --prune origin`, and it CANNOT WORK HERE: checkout ran with
+          # persist-credentials:false, so .git/config carries no credential and any fetch against a
+          # private repo exits 128 - which under `set -e` killed the whole step, and on the PowerShell
+          # side did nothing at all while still claiming the refs had been pruned. Deleting the stale
+          # refs this clone ALREADY HOLDS needs no network and no credential, and stale local refs are
+          # the entire failure mode. Keep origin/HEAD AND WHAT IT POINTS AT (deleting the target leaves
+          # the symref dangling, and every later `git` read of it then errors), this branch's own remote
+          # ref, and (on a pull request) the base ref; drop the rest.
+          if [ "$GITHUB_EVENT_NAME" = "schedule" ] || [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "stale remote-tracking refs: cleanup SKIPPED on $GITHUB_EVENT_NAME - this run scans every ref on purpose."
+            scope="--all"
+          elif [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            echo "stale remote-tracking refs: cleanup SKIPPED on a tag push - GITHUB_REF_NAME is a tag, so no remote-tracking branch is safe to key the keep-list on."
+            scope="HEAD"
+          else
+            git for-each-ref --format='%(refname)' refs/remotes/origin > "$RUNNER_TEMP/remote-refs.txt"
+            keep_list="refs/remotes/origin/HEAD"
+            if [ -n "${GITHUB_REF_NAME:-}" ]; then keep_list="$keep_list refs/remotes/origin/${GITHUB_REF_NAME}"; fi
+            # refs/remotes/origin/HEAD is a SYMREF. Keeping the symref while deleting its target leaves
+            # it dangling, so resolve it and keep the target too.
+            head_target=$(git symbolic-ref -q refs/remotes/origin/HEAD || true)
+            # Added only if not already listed, so the keep list this step PRINTS matches the
+            # PowerShell template's de-duplicated one - on a PR into the default branch, the symref
+            # target and the base ref are the same ref.
+            if [ -n "$head_target" ]; then
+              case " $keep_list " in *" $head_target "*) ;; *) keep_list="$keep_list $head_target" ;; esac
+            fi
+            if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+              base_keep="refs/remotes/origin/${GITHUB_BASE_REF}"
+              case " $keep_list " in *" $base_keep "*) ;; *) keep_list="$keep_list $base_keep" ;; esac
+            fi
+            kept=0
+            dropped=0
+            while IFS= read -r ref; do
+              [ -n "$ref" ] || continue
+              keep=""
+              # `set -f`: $keep_list is deliberately unquoted so it splits on whitespace into
+              # individual refs, and without noglob a ref/branch name containing a glob character
+              # would be expanded against the working directory instead of compared literally.
+              set -f
+              for k in $keep_list; do
+                if [ "$ref" = "$k" ]; then keep=1; break; fi
+              done
+              set +f
+              if [ -n "$keep" ]; then
+                kept=$((kept + 1))
+                continue
+              fi
+              git update-ref -d "$ref"
+              dropped=$((dropped + 1))
+            done < "$RUNNER_TEMP/remote-refs.txt"
+            echo "stale remote-tracking refs: $kept kept, $dropped dropped (keep list: $keep_list)."
+            # The pull_request arm is LIVE: this template ships the trigger (see TRIGGER STRATEGY at the
+            # top). It scans ONLY the proposed range origin/<base>..HEAD, where HEAD is the merge commit
+            # GitHub builds for the PR. A secret already on the base is the base's finding - graded by
+            # the push to the base and by the weekly sweep - and is never attributed to this PR.
+            if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+              # fetch-depth:0 has ALREADY brought refs/remotes/origin/<base> down with the rest of the
+              # ref graph, so the range needs no fetch - only proof that the ref is really there. A
+              # missing base ref would make gitleaks resolve an empty range and report a triumphant zero.
+              if ! git rev-parse --verify --quiet "refs/remotes/origin/${GITHUB_BASE_REF}" >/dev/null; then
+                echo "::error::gitleaks COULD NOT RUN: refs/remotes/origin/${GITHUB_BASE_REF} is missing, so the range origin/${GITHUB_BASE_REF}..HEAD cannot be resolved and the secret scan would report a clean zero having read nothing. The checkout step in this job must run with 'fetch-depth: 0' (standard C1) - restore it."
+                exit 2
+              fi
+              scope="origin/${GITHUB_BASE_REF}..HEAD"
+            else
+              # A push reaches this arm only on the default branch (on.push.branches), and scans that
+              # branch's FULL history. NOT --all on a push. The coverage chain as shipped: a commit is
+              # scanned by the PR that proposes it (its range), again by the push that lands it on the
+              # default branch (full history), and every week by the --all sweep above. A branch pushed
+              # WITHOUT a PR is reached only by that weekly sweep (or a manual workflow_dispatch).
+              scope="HEAD"
+            fi
+          fi
+          # ONE decision, TWO consumers. $scope is the rev selection this event chose; the gitleaks flag
+          # AND the upper bound below are both built from it, so the bound can never describe a scope
+          # other than the one gitleaks was given. Every value is a single token (--all, HEAD or
+          # origin/<base>..HEAD), so it is quoted everywhere.
+          # REMERGE-DIFF, ON EVERY ARM (C1). Plain `git log -p` shows NO diff for a merge commit, so a
+          # secret typed into a merge CONFLICT RESOLUTION - present in neither parent - was read by no
+          # arm at all. --remerge-diff diffs each merge against git's own automatic re-merge of its
+          # parents, so exactly what the resolver added is scanned, once, and a clean merge adds
+          # nothing. It changes which DIFFS gitleaks sees, never which COMMITS are in scope, so the
+          # rev-list bound below is unchanged. gitleaks splits --log-opts on spaces, so the flag rides
+          # inside the same argument. BARRED, do not substitute: --diff-merges=first-parent (re-reports
+          # everything the merged branch brought in as one diff attributed to the merge, and still is not
+          # the resolution), and `gitleaks dir .` in any PR gate (scans the working tree, so every secret
+          # already on the base is reported as the PR's, and it reads no history).
+          logopts="--log-opts=$scope --remerge-diff"
+          # .gitleaksignore in the repo root suppresses rotated/false-positive findings.
+          # The report lives under RUNNER_TEMP, not in the checkout: a committed file or DIRECTORY named
+          # like it can then neither be read as this run's proof nor break the pre-delete. Pre-deleted, as
+          # the other scanner steps do, so a leftover can never stand in for a report gitleaks did not write.
+          report="$RUNNER_TEMP/gitleaks-report.json"
+          rm -f "$report" "$RUNNER_TEMP/gitleaks-run.log"
+          # gitleaks writes its log, INCLUDING its own commits-scanned count, to STDERR. Both streams go to
+          # a file, and the count is read from that file.
+          # NOT `| tee`: in a pipeline $? is tee's status, and a wrong $rc turns this gate green.
+          # --log-level debug, AND THE DEBUG LOG STAYS IN THE FILE. gitleaks does not check its git
+          # subprocess's exit status: when git dies mid-log (git 2.41/2.42 segfault under --remerge-diff
+          # with GIT_ATTR_SOURCE; any other crash) gitleaks scans what arrived, exits 0, and says so only at
+          # DEBUG level: `DBG command aborted error="exit status ..." cmd=...`. The full log stays in
+          # $RUNNER_TEMP/gitleaks-run.log for triage; the job log gets its INF/WRN/ERR/FTL lines.
+          # Capped at debug, never trace: trace level prints allowlisted secrets in clear.
+          # ATTRIBUTES COME FROM THE EMPTY TREE, NOT THE CHECKOUT. `git log -p` applies the CHECKED-OUT
+          # .gitattributes to every historical commit, so a path marked `-diff` or `binary` there prints
+          # "Binary files differ" and gitleaks reads nothing, with exit 0 and no ERR line (measured on
+          # 8.30.1: `secret.txt -diff` = 1 of 2 commits scanned and the key missed; `* -diff` = 0 scanned).
+          # Real repos mark lockfiles, min.js and svg that way, and any PR can add the line. With
+          # GIT_ATTR_SOURCE set to the empty tree, no attribute applies, so every text change is read;
+          # a real binary (NUL bytes) is still detected by content and skipped. GIT_ATTR_SOURCE needs
+          # git >= 2.41 (release notes 2.41.0), and >= 2.43 alongside --remerge-diff; an older git ignores
+          # it silently. The hosted ubuntu-latest image ships a far newer git (2.55 measured), and pinning
+          # the minimum is the git-version gate's job.
+          # GIT_ATTR_NOSYSTEM=1 and XDG_CONFIG_HOME set to an EMPTY directory ride with it, as in
+          # ci-selfhosted.yml: GIT_ATTR_SOURCE replaces only the checked-out .gitattributes, and git still
+          # reads the system attributes file and the per-user default one ($XDG_CONFIG_HOME/git/attributes,
+          # else ~/.config/git/attributes). A fresh VM carries neither planted, but the templates stay uniform.
+          attr_source=$(git hash-object -t tree /dev/null)
+          empty_xdg="$RUNNER_TEMP/gitleaks-empty-xdg"
+          mkdir -p "$empty_xdg"
+          if [ -n "$(ls -A "$empty_xdg")" ]; then
+            echo "::error::gitleaks COULD NOT RUN: $empty_xdg is not empty, so it cannot stand in for an empty XDG_CONFIG_HOME. This is NOT a finding (exit 2)."
+            exit 2
+          fi
+          set +e
+          GIT_ATTR_SOURCE="$attr_source" GIT_ATTR_NOSYSTEM=1 XDG_CONFIG_HOME="$empty_xdg" \
+            "$RUNNER_TEMP/gitleaks" git . --no-banner --redact --exit-code 1 \
+            --log-level debug --report-format json --report-path "$report" "$logopts" \
+            > "$RUNNER_TEMP/gitleaks-run.log" 2>&1
+          rc=$?
+          set -e
+          # ANSI CSI sequences stripped (gitleaks colours its log even with no TTY). gitleaks-run.plain.log
+          # is every line, debug included, for the abort check; gitleaks-run.info.log leaves out DBG/TRC and
+          # is both what the job log shows and what the count and ERR checks read.
+          sed 's/\x1b\[[0-9;]*[A-Za-z]//g' "$RUNNER_TEMP/gitleaks-run.log" > "$RUNNER_TEMP/gitleaks-run.plain.log"
+          grep -vE '^[^ ]+ (DBG|TRC) ' "$RUNNER_TEMP/gitleaks-run.plain.log" > "$RUNNER_TEMP/gitleaks-run.info.log" || true
+          cat "$RUNNER_TEMP/gitleaks-run.info.log"
+          debug_lines=$(grep -cE '^[^ ]+ (DBG|TRC) ' "$RUNNER_TEMP/gitleaks-run.plain.log" || true)
+          echo "(gitleaks debug log: $debug_lines DBG/TRC line(s) kept in $RUNNER_TEMP/gitleaks-run.log for triage, not printed here.)"
+          abort_lines=$(grep -cE 'command aborted|exit status' "$RUNNER_TEMP/gitleaks-run.plain.log" || true)
+          first_abort=$(grep -m1 -E 'command aborted|exit status' "$RUNNER_TEMP/gitleaks-run.plain.log" || true)
+          live_lines=$(grep -cE '^[^ ]+ DBG executing: .* log -p( |$)' "$RUNNER_TEMP/gitleaks-run.plain.log" || true)
+          echo "rc=$rc"
+          # WHICH RED IS IT. gitleaks 8.30.1 exits 1 for findings (--exit-code 1) AND for a fatal error
+          # (its logger's Fatal calls exit(1)), so rc alone cannot tell "found a secret" from "could not
+          # run". The report settles it: a findings exit writes a JSON array with at least one entry, a
+          # fatal exit writes none (it was pre-deleted above). -1 = no readable report.
+          findings=$(GL_REPORT="$report" node -e '
+            try { const a = JSON.parse(require("fs").readFileSync(process.env.GL_REPORT, "utf8"));
+                  console.log(Array.isArray(a) ? a.length : -1); }
+            catch (e) { console.log(-1); }' 2>/dev/null || echo -1)
+          # gitleaks' OWN count (HARD 2 below needs it), read from the non-debug lines. Verified against
+          # 8.30.1: `INF 3 commits scanned.` (it says "commits" even for 1; "commit" is accepted too). The
+          # LINE and the NUMBER are read separately, so "gitleaks said nothing" and "gitleaks said something
+          # unreadable" fail with different messages.
+          count_lines=$(grep -ciE 'commits? scanned' "$RUNNER_TEMP/gitleaks-run.info.log" || true)
+          scanned_line=$(grep -iE 'commits? scanned' "$RUNNER_TEMP/gitleaks-run.info.log" || true)
+          scanned=""
+          if [ "$count_lines" = "1" ]; then
+            scanned=$(printf '%s\n' "$scanned_line" | sed -nE 's/^(.*[^0-9])?([0-9]+) commits? scanned.*$/\2/Ip')
+          fi
+          if [ "$rc" -eq 1 ] && [ "$findings" -gt 0 ]; then
+            # --redact hides the VALUE, not the LOCATION. A step that reports only "leaks found: N"
+            # cannot be triaged, reproduced, or dismissed, so print the five fields that are safe under
+            # redaction. Fingerprint is the exact string that goes into .gitleaksignore for a finding
+            # confirmed false - AFTER rotation, never instead of it. File names are committer-controlled
+            # and a fingerprint contains one, so every message is escaped the way a workflow command
+            # requires (% CR LF): a name carrying a newline cannot then end this annotation and inject a
+            # workflow command of its own.
+            GL_REPORT="$report" node -e '
+              const fs = require("fs");
+              const esc = (s) => String(s).replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A");
+              let findings = [];
+              try { findings = JSON.parse(fs.readFileSync(process.env.GL_REPORT, "utf8")) || []; }
+              catch (e) { console.log("::error::" + esc("gitleaks report unreadable (" + e.message + ") - triage from the raw log.")); process.exit(0); }
+              for (const f of findings) {
+                console.log("::error::" + esc("gitleaks " + f.RuleID + " " + f.File + ":" + f.StartLine +
+                            " commit=" + f.Commit + " fingerprint=" + f.Fingerprint));
+              }
+            ' || echo "::warning::could not parse the gitleaks report - see the artifact."
+            if [ "$abort_lines" != "0" ]; then
+              echo "::warning::gitleaks' git subprocess also ABORTED ($first_abort): the findings above are real, and the rest of $scope was NOT scanned. Fix the cause and re-run once they are rotated."
+            fi
+            echo "::error::gitleaks FOUND secrets (rc=1, $findings finding(s)) in scope $scope; gitleaks reports ${scanned:-an unreadable number of} commits scanned. Rotate today; add the fingerprint above to .gitleaksignore only AFTER rotation."
+            # The FOUND signal for the sweep's tracking issue (secrets-issue job). Set on this path only. A
+            # failure to write it is reported and the step still exits 1: it must not change a FOUND.
+            if ! echo "found=true" >> "$GITHUB_OUTPUT"; then
+              echo "::warning::could not record found=true for the sweep's tracking issue; the secrets above were FOUND all the same, and no tracking issue will be opened for this run."
+            fi
+            exit 1
+          fi
+          if [ "$rc" -ne 0 ]; then
+            if [ "$findings" -lt 0 ]; then report_state="no readable findings report"; else report_state="a report listing $findings finding(s), so not a findings exit"; fi
+            echo "::error::gitleaks COULD NOT RUN (rc=$rc, $report_state). This is NOT a finding and NOT a clean scan - nothing in this run graded the history. The FTL/ERR line in the gitleaks log above says why; re-run, and fix the cause if it repeats."
+            exit 2
+          fi
+          # GIT FAILED UNDER GITLEAKS. gitleaks 8.30.1 logs every line git writes to stderr as
+          # `ERR [git] ...` plus `ERR error="stderr is not empty"`, still writes a report ([]) and EXITS 0,
+          # with a count covering only what git produced before it failed: 0 for a bad option, a partial
+          # number for a mid-log failure (which the upper bound below accepts), or a lazy blob fetch that
+          # died. None of HARD 1-3 can see that when the scope itself still counts, so ANY ERR line on a
+          # clean exit fails the scan. (Its rename-limit notices are logged at WRN, not ERR.)
+          err_lines=$(grep -cE '^[^ ]+ ERR ' "$RUNNER_TEMP/gitleaks-run.info.log" || true)
+          if [ "$err_lines" != "0" ]; then
+            echo "::error::gitleaks COULD NOT RUN cleanly: it logged $err_lines ERR line(s) above (git failed under it) yet exited 0, so the verdict covers an unknown part of $scope. Treated as a FAILED scan (exit 2)."
+            exit 2
+          fi
+          # THE ABORT CHECK BELOW MUST BE LIVE. It reads gitleaks' debug log, so that log must show gitleaks
+          # starting git. gitleaks 8.30.1 prints `<time> DBG executing: <path>/git -C . log -p -U0 <scope>
+          # --remerge-diff` (measured). No such line means the log level or format changed, and the abort
+          # check would pass on silence: a scan that could not be verified (exit 2).
+          if [ "$live_lines" = "0" ]; then
+            echo "::error::gitleaks COULD NOT RUN verifiably: its debug log has no 'DBG executing: ... log -p' line, so the git-abort check is not live and a crashed git would pass unseen. Expected from gitleaks $ver at --log-level debug; if its log format changed, fix this step - do not drop the check. The full debug log is in $RUNNER_TEMP/gitleaks-run.log. Treated as a FAILED scan (exit 2)."
+            exit 2
+          fi
+          # GIT ABORTED UNDER GITLEAKS. A git that crashes (a signal, an access violation) often writes
+          # nothing to stderr, so the ERR check above cannot see it; gitleaks' debug log can (see the
+          # invocation above). Any "command aborted" or "exit status" line fails the scan.
+          if [ "$abort_lines" != "0" ]; then
+            echo "::error::gitleaks COULD NOT RUN cleanly: its git subprocess ABORTED ($first_abort) yet gitleaks exited $rc. gitleaks does not check git's exit status, so the scan stopped where git died and the verdict covers an unknown part of $scope (git 2.41/2.42 crash this way under --remerge-diff with GIT_ATTR_SOURCE). The full debug log is in $RUNNER_TEMP/gitleaks-run.log. Treated as a FAILED scan (exit 2)."
+            exit 2
+          fi
+          # OCTOPUS MERGES (3+ parents). --remerge-diff cannot re-merge one: git skips it with a notice on
+          # STDOUT (so no ERR line) and shows no diff, so a secret in an octopus resolution is never read.
+          # Rare enough to fail closed on, naming them; a repo that needs octopus merges is handled then.
+          if ! octo=$(git rev-list --count --min-parents=3 "$scope"); then
+            echo "::error::COULD NOT count octopus merges in $scope (git rev-list failed). Treated as a FAILED scan (exit 2)."
+            exit 2
+          fi
+          if [ "$octo" != "0" ]; then
+            octo_list=$(git rev-list --min-parents=3 "$scope" | head -n 10 | tr '\n' ' ')
+            echo "::error::$octo octopus merge(s) in $scope were NOT scanned: --remerge-diff skips merges with 3+ parents silently, so their resolutions went unread. First up to 10: $octo_list. Treated as a FAILED scan (exit 2)."
+            exit 2
+          fi
+          # HARD 2 - PRESENCE. A clean exit with no readable count is the unattached instrument: nothing
+          # in the run says how much history the verdict covers, which is the whole difference between
+          # "no secrets" and "nothing was read". Missing and unparsable are both a failed scan.
+          if [ "$count_lines" = "0" ]; then
+            echo "::error::gitleaks exited 0 but printed no commits-scanned line, so this run's coverage cannot be audited and a clean verdict cannot be trusted. Expected one log line of the form 'N commits scanned.' from gitleaks $ver. Treated as a FAILED scan (exit 2), not a clean one; if the tool's log format changed, fix the parser in this step - do not drop the check."
+            exit 2
+          fi
+          if [ -z "$scanned" ]; then
+            echo "::error::gitleaks printed $count_lines commits-scanned line(s) this step cannot read as ONE non-negative integer: '$scanned_line'. The coverage of this run is unknown, which is treated as a FAILED scan (exit 2), not a clean one. Fix the parser in this step for gitleaks $ver - do not drop the check."
+            exit 2
+          fi
+          # The rev-list size of the SAME scope gitleaks was given. A scope git cannot count is a scope
+          # this step cannot bound, so that fails closed too.
+          if ! scope_commits=$(git rev-list --count "$scope"); then
+            echo "::error::gitleaks COULD NOT be bounded: 'git rev-list --count $scope' failed, so the upper bound on this scan cannot be computed. Treated as a FAILED scan (exit 2)."
+            exit 2
+          fi
+          scope_nomerges=$(git rev-list --count --no-merges "$scope" || echo unknown)
+          echo "scanned: $scanned commits (gitleaks' own count)."
+          echo "scope size: $scope_commits commits (git rev-list --count $scope)."
+          # HARD 1 - THE UPPER BOUND, NEVER AN EQUALITY. gitleaks counts only commits it actually diffs;
+          # everything legitimate moves its number DOWN (clean merges, empty diffs, a future counting
+          # change in the tool), so equality would couple the fleet to gitleaks internals and one version
+          # bump could turn every repo red at once. Only a scan WIDER than its declared scope can push the
+          # number UP - the scope was not applied, and the verdict covers history nobody declared.
+          if [ "$scanned" -gt "$scope_commits" ]; then
+            echo "::error::coverage bound VIOLATED: gitleaks reports $scanned commits scanned, but the declared scope ($scope) holds only $scope_commits. A scan can read at most the commits its scope holds, so the scan was WIDER than declared. Treated as a FAILED scan (exit 2)."
+            exit 2
+          fi
+          # HARD 3 - THE EMPTY SCOPE (the triumphant zero). gitleaks reports "0 commits scanned." for an
+          # empty range and exits 0, which reads as clean. A push always carries its own tip and a sweep
+          # of a repo with history is never empty, so an empty scope on any event but a pull request
+          # means the range resolved to nothing.
+          if [ "$scope_commits" -eq 0 ] && [ "$GITHUB_EVENT_NAME" != "pull_request" ]; then
+            echo "::error::the declared scope ($scope) resolves to 0 commits on this $GITHUB_EVENT_NAME event, so the scan graded nothing and reported it clean. Treated as a FAILED scan (exit 2)."
+            exit 2
+          fi
+          # ZERO SCANNED AGAINST A NON-EMPTY NON-MERGE SCOPE (the blinding signature). A push, a dispatch or a
+          # schedule whose scope holds non-merge commits, of which gitleaks read NONE, is what an attribute
+          # file marking everything -diff, a crash on the first commit, or a replaced history looks like:
+          # every commit was there to read and nothing was. On a pull request, 0 stays the warning below
+          # (a PR of merges or empty commits is legitimate).
+          if [ "$scanned" -eq 0 ] && [ "$GITHUB_EVENT_NAME" != "pull_request" ]; then
+            case "$scope_nomerges" in
+              ''|*[!0-9]*)
+                echo "::error::gitleaks scanned 0 commits in $scope on this $GITHUB_EVENT_NAME event and the non-merge count of that scope could not be read ('$scope_nomerges'), so a blinded scan cannot be ruled out. Treated as a FAILED scan (exit 2)."
+                exit 2 ;;
+            esac
+            if [ "$scope_nomerges" -gt 0 ]; then
+              echo "::error::gitleaks scanned 0 commits, but $scope holds $scope_nomerges non-merge commit(s) on this $GITHUB_EVENT_NAME event: every one was there to read and none was. That is the signature of a blinded scan (attributes marking paths -diff or binary, git dying on the first commit, replaced history). Treated as a FAILED scan (exit 2)."
+              exit 2
+            fi
+          fi
+          # PRINT-ONLY, never asserted: what the gap between git's count and gitleaks' is made of.
+          echo "scope size without merges: $scope_nomerges commits (git rev-list --count --no-merges $scope); gap scope - scanned = $((scope_commits - scanned))."
+          echo "Clean merges (an empty --remerge-diff) and commits with an empty diff are counted by git but give gitleaks nothing to scan; they account for the gap."
+          if [ "$scanned" -eq 0 ]; then
+            if [ "$scope_commits" -eq 0 ]; then
+              why="the range holds no commits (everything on this branch is already in the base)"
+            else
+              why="every commit in it is a clean merge (empty --remerge-diff) or has an empty diff, so gitleaks had nothing to scan"
+            fi
+            echo "::warning::gitleaks scanned 0 commits in $scope ($scope_commits in scope, $scope_nomerges non-merge): $why. That is legitimate, but this clean result covers NO content."
+          fi
+          echo "gitleaks: no secrets in the scanned range ($logopts): $scanned commits scanned (gitleaks' own count)."
+      - name: Gitleaks report (redacted findings artifact)
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02   # v4.6.2, SHA-pinned (C4)
+        with:
+          name: gitleaks-report
+          path: ${{ runner.temp }}/gitleaks-report.json   # written under RUNNER_TEMP by the scan step, never in the checkout
+          if-no-files-found: ignore
+
+  secrets-issue:
+    # TRACKING ISSUE FOR THE SWEEP (built once, here in the template; never written per repo). When the
+    # full-history sweep - schedule or workflow_dispatch, scope --all - FINDS secrets, this job opens ONE
+    # tracking issue in the repository, or updates the one already open, so a finding in history nobody is
+    # watching reaches a person instead of ending as one more red scheduled run.
+    #   * It runs only on those two events, and only when the scan step reported FOUND (its exit 1, output
+    #     found=true). A COULD NOT RUN (exit 2) opens nothing: that is non-evidence, and the red run says so.
+    #   * Per finding the issue carries rule id, file:line, commit and fingerprint, and NEVER the secret: the
+    #     body is built from those location fields of the redacted report and nothing else (Secret and Match
+    #     are never read, nor author, email or message), inside a fenced code block longer than any backtick
+    #     run in it, so no committer-controlled path renders as markdown, HTML or an @mention.
+    #   * ONE issue: the open issue with this fixed title that this workflow's own token created
+    #     (github-actions[bot]), labelled gitleaks-sweep. A later sweep that finds something rewrites its
+    #     body in place and comments ONLY when the set of fingerprints changed, so a weekly re-find of the
+    #     same history notifies nobody twice. The job is serialized (concurrency below), so two sweeps
+    #     cannot both create one; a third run queued behind a running one replaces the queued one, which is
+    #     harmless because the newest sweep carries the newest list.
+    #   * A clean sweep CLOSES NOTHING and touches nothing. A clean sweep shows only that the current
+    #     ruleset and .gitleaksignore pass; a secret allowlisted or rewritten out of history is not a rotated
+    #     one. Closing the issue is a person's decision.
+    #   * LEAST PRIVILEGE: issues: write is granted to THIS job only. It runs no repository code (no
+    #     checkout) and reads only the report artifact; the scanning job keeps contents: read.
+    #   * Whether the sweep RAN at all (liveness) is not checked here; the gate owns that.
+    needs: secrets
+    if: ${{ !cancelled() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && needs.secrets.outputs.found == 'true' }}
+    runs-on: ubuntu-latest   # a literal, never the CI_RUNS_ON expression: this repository is PUBLIC (see RUNNER SELECTION in the header)
+    timeout-minutes: 10
+    permissions:
+      issues: write   # open or update the sweep's tracking issue and its label; nothing else
+    concurrency:
+      group: gitleaks-sweep-issue
+      cancel-in-progress: false
+    steps:
+      - name: Download the redacted gitleaks report
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093   # v4.3.0, SHA-pinned (C4)
+        with:
+          name: gitleaks-report
+          path: ${{ runner.temp }}/gitleaks-sweep
+      - name: Build the tracking-issue body (redacted location fields only)
+        run: |
+          node - <<'JS'
+          const fs = require("fs");
+          const path = require("path");
+          const crypto = require("crypto");
+          const tmp = process.env.RUNNER_TEMP;
+          let report;
+          try { report = JSON.parse(fs.readFileSync(path.join(tmp, "gitleaks-sweep", "gitleaks-report.json"), "utf8")); }
+          catch (e) { console.log("::error::the sweep reported FOUND but its report artifact cannot be read (" + e.message.replace(/[\r\n%]/g, " ") + "), so no tracking issue can be built. Triage from the failed sweep run."); process.exit(1); }
+          if (!Array.isArray(report) || report.length === 0) {
+            console.log("::error::the sweep reported FOUND but its report lists no findings, so no tracking issue can be built. Triage from the failed sweep run.");
+            process.exit(1);
+          }
+          // ONLY these five fields of each finding are read. Secret, Match, Author, Email and Message are
+          // never touched, so they cannot reach the issue whatever the report holds.
+          // A value is shown with CR, LF, TAB, every other C0 and C1 control character (NEL included) and
+          // backslash made visible, so one finding is exactly one line and a crafted file name cannot start
+          // a line of its own; the Unicode line and paragraph separators and the bidirectional controls
+          // (U+202E RIGHT-TO-LEFT OVERRIDE and its kin) are shown as \uXXXX, so a name cannot break a line
+          // or display in an order that hides what it is.
+          const clean = (v) => String(v === undefined || v === null ? "" : v)
+            .replace(/\\/g, "\\\\").replace(/\r/g, "\\r").replace(/\n/g, "\\n").replace(/\t/g, "\\t")
+            .replace(/[\x00-\x1f\x7f-\x9f]/g, (c) => "\\x" + c.charCodeAt(0).toString(16).padStart(2, "0"))
+            .replace(/[\u061c\u200e\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g, (c) => "\\u" + c.charCodeAt(0).toString(16).padStart(4, "0"));
+          const lines = report.map((f) => clean(f.RuleID) + "  " + clean(f.File) + ":" + clean(f.StartLine) +
+            "  commit=" + clean(f.Commit) + "  fingerprint=" + clean(f.Fingerprint));
+          const fps = Array.from(new Set(report.map((f) => String(f.Fingerprint)))).sort();
+          const digest = crypto.createHash("sha256").update(fps.join("\n"), "utf8").digest("hex");
+          let run = 0;
+          for (const l of lines) for (const m of (l.match(/`+/g) || [])) run = Math.max(run, m.length);
+          const fence = "`".repeat(Math.max(3, run + 1));
+          const ref = String(process.env.GITHUB_REF || "").replace(/[^A-Za-z0-9._\/-]/g, "?");
+          const runUrl = process.env.GITHUB_SERVER_URL + "/" + process.env.GITHUB_REPOSITORY + "/actions/runs/" + process.env.GITHUB_RUN_ID;
+          const head = [
+            "<!-- gitleaks-sweep-tracking-issue: opened and updated by the secrets-issue job of CI. The next sweep that finds something rewrites this body. -->",
+            "**The full-history gitleaks sweep found " + report.length + " finding(s) in this repository's history.**",
+            "",
+            "- Latest sweep: " + runUrl + " (event " + process.env.GITHUB_EVENT_NAME + ", ref " + ref + ", commit " + process.env.GITHUB_SHA + "), " + new Date().toISOString().replace(/\.[0-9]+Z$/, "Z") + ".",
+            "- Scope: every ref in the clone (`--log-opts=--all --remerge-diff`), gitleaks " + process.env.GITLEAKS_VERSION + ".",
+            "- One line per finding: rule id, file:line, commit, fingerprint. The secret values are not here and never are: the scan runs with --redact, and this list is built from those location fields only.",
+            "",
+            fence + "text",
+          ];
+          const tail = [
+            fence,
+            "",
+            "**What to do:** rotate every real credential today, dated from the commit that introduced it. For a finding confirmed false, add its fingerprint to .gitleaksignore AFTER rotation, never instead of it. Every sweep that finds something rewrites this list; a clean sweep leaves this issue alone, so close it by hand once a sweep runs clean.",
+            "",
+            "<!-- gitleaks-sweep-digest: " + digest + " -->",
+          ];
+          // GitHub caps an issue body at 65536 characters: list what fits under 60000 and say how many more.
+          const budget = 60000 - head.join("\n").length - tail.join("\n").length - 200;
+          const shown = [];
+          let used = 0;
+          for (const l of lines) { if (used + l.length + 1 > budget) break; shown.push(l); used += l.length + 1; }
+          if (shown.length < lines.length) shown.push("... and " + (lines.length - shown.length) + " more: see the gitleaks-report artifact of the sweep run above.");
+          fs.writeFileSync(path.join(tmp, "gitleaks-issue-body.md"), head.concat(shown, tail).join("\n") + "\n", "utf8");
+          fs.writeFileSync(path.join(tmp, "gitleaks-issue-digest.txt"), digest + "\n", "utf8");
+          console.log("tracking-issue body built: " + report.length + " finding(s), " + (shown.length === lines.length ? lines.length : shown.length - 1) + " listed, fingerprint digest " + digest + ".");
+          JS
+      - name: Open or update the tracking issue
+        env:
+          GH_API_TOKEN: ${{ github.token }}
+        run: |
+          node - <<'JS'
+          const fs = require("fs");
+          const path = require("path");
+          const esc = (s) => String(s).replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A");
+          const TITLE = "gitleaks sweep: secrets found in this repository's history";
+          const LABEL = "gitleaks-sweep";
+          const BOT = "github-actions[bot]";
+          const api = process.env.GITHUB_API_URL + "/repos/" + process.env.GITHUB_REPOSITORY;
+          const headers = { Authorization: "Bearer " + process.env.GH_API_TOKEN, Accept: "application/vnd.github+json",
+                            "X-GitHub-Api-Version": "2022-11-28", "Content-Type": "application/json" };
+          async function call(method, url, body) {
+            const r = await fetch(url, { method: method, headers: headers, body: body === undefined ? undefined : JSON.stringify(body),
+                                         signal: AbortSignal.timeout(30000) });
+            const text = await r.text();
+            if (!r.ok) { const e = new Error(method + " " + url + " answered HTTP " + r.status + ": " + text.slice(0, 300)); e.status = r.status; throw e; }
+            return text ? JSON.parse(text) : null;
+          }
+          (async () => {
+            const tmp = process.env.RUNNER_TEMP;
+            const body = fs.readFileSync(path.join(tmp, "gitleaks-issue-body.md"), "utf8");
+            const digest = fs.readFileSync(path.join(tmp, "gitleaks-issue-digest.txt"), "utf8").trim();
+            // The label is a convenience for people; the issue is FOUND by title and creator, so a label that
+            // could not be created never makes a second issue.
+            try { await call("GET", api + "/labels/" + LABEL); }
+            catch (e) {
+              if (e.status !== 404) throw e;
+              try { await call("POST", api + "/labels", { name: LABEL, color: "b60205", description: "Opened by the CI gitleaks sweep: secrets found in history" }); }
+              catch (e2) { if (e2.status !== 422) throw e2; }
+            }
+            let issue = null;
+            for (let page = 1; page <= 10 && !issue; page++) {
+              const list = await call("GET", api + "/issues?state=open&creator=" + encodeURIComponent(BOT) + "&per_page=100&page=" + page);
+              if (!Array.isArray(list) || list.length === 0) break;
+              issue = list.find((i) => !i.pull_request && i.title === TITLE) || null;
+            }
+            if (!issue) {
+              const made = await call("POST", api + "/issues", { title: TITLE, body: body, labels: [LABEL] });
+              console.log("opened tracking issue #" + made.number + ": " + made.html_url);
+              return;
+            }
+            const seen = String(issue.body || "").match(/gitleaks-sweep-digest: [0-9a-f]{64}/g) || [];
+            const before = seen.length ? seen[seen.length - 1].slice(-64) : "";
+            await call("PATCH", api + "/issues/" + issue.number, { body: body });
+            if (before === digest) {
+              console.log("updated tracking issue #" + issue.number + " in place: same findings as before, no comment.");
+              return;
+            }
+            const runUrl = process.env.GITHUB_SERVER_URL + "/" + process.env.GITHUB_REPOSITORY + "/actions/runs/" + process.env.GITHUB_RUN_ID;
+            await call("POST", api + "/issues/" + issue.number + "/comments",
+              { body: "The sweep's findings CHANGED (fingerprint digest " + digest + ", was " + (before || "none") + "). The list in the issue body is now current as of " + runUrl + "." });
+            console.log("updated tracking issue #" + issue.number + ": findings changed, comment posted.");
+          })().catch((e) => { console.log("::error::" + esc("could not open or update the gitleaks sweep tracking issue: " + e.message)); process.exit(1); });
+          JS
+
+  security:
+    # C5 security gates — SCA (OSV-Scanner) + SAST (Semgrep OSS) + PowerShell (PSScriptAnalyzer),
+    # then a best-effort MITRE ATT&CK enrichment. Replaces the retired third-party SCA job AND the fail-open
+    # `dotnet list package --vulnerable` NuGet gate. red_team_review / the NPU code index are the CHEAP
+    # first-pass TRIAGE layer that feeds these tools — they are NOT the gate (an embeddings index has no
+    # CVE feed and no sound taint analysis). The three gates evaluate independently (`if: ${{ !cancelled() }}`)
+    # so one failure never hides the others; each fails the job on its own findings.
+    #
+    # NO TOKEN, NO QUOTA, NO ACCOUNT: OSV uses osv.dev (GHSA+NVD); Semgrep OSS uses free registry
+    # rulesets read-only. Nothing is uploaded to a third-party org and there is no private-test budget.
+    if: ${{ github.event_name != 'schedule' }}
+    runs-on: ubuntu-latest   # a literal, never the CI_RUNS_ON expression: this repository is PUBLIC (see RUNNER SELECTION in the header)
+    # 45, not the 30 the other jobs use: this job carries the Semgrep scan, and SEMGREP_TIMEOUT is a
+    # PER-RULE PER-FILE budget of 300s with --timeout-threshold 0 (no cap on how many rules may spend
+    # it). On a large repo that is a legitimately long scan, and the correct failure is a red gate with
+    # findings, never a job killed mid-scan whose log says nothing about why. Raise this before ever
+    # lowering SEMGREP_TIMEOUT.
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262   # v4.4.0 — SHA-pinned (C4 + zizmor unpinned-uses); Dependabot github-actions bumps this
+        with:
+          persist-credentials: false   # zizmor artipacked (medium) - no token left in .git/config for later steps
+
+      # ---------- SCA: OSV-Scanner (google/osv-scanner; osv.dev = GHSA + NVD) ----------
+      - name: Install OSV-Scanner (version is config-driven — H1; verified current 2026-08-07)
+        # Binary download (mirrors the gitleaks step) rather than google/osv-scanner-action: the reusable
+        # workflow is job-level so its output cannot feed the enrichment step below, and its SARIF upload
+        # defaults to GitHub code-scanning, which needs paid GHAS on a PRIVATE repo. The CLI gives a
+        # trustworthy exit code, a JSON artifact, and full config control. SHA-pinned action alternative:
+        # google/osv-scanner-action@8deb546fdb875b9996d27d4950be7312dac076a1 (= v2.5.0).
+        run: |
+          ver="${OSV_SCANNER_VERSION:-2.5.0}"
+          # Release asset AND pin by RUNNER_ARCH (see the env block); any other architecture fails closed
+          # BEFORE downloading.
+          case "${RUNNER_ARCH:-}" in
+            X64)   asset="osv-scanner_linux_amd64"; want="$OSV_SCANNER_SHA256" ;;
+            ARM64) asset="osv-scanner_linux_arm64"; want="$OSV_SCANNER_SHA256_ARM64" ;;
+            *)
+              echo "::error::OSV-Scanner could not be installed: RUNNER_ARCH='${RUNNER_ARCH:-}' is neither X64 nor ARM64, so this template has no pinned OSV-Scanner asset or SHA-256 for this runner. FAILING CLOSED (C5) - a scan that cannot run is not a clean scan."
+              exit 1 ;;
+          esac
+          # Defence in depth: never compare against an empty or malformed pin (an empty want would match an empty hash).
+          if ! printf '%s' "$want" | grep -Eq '^[0-9a-f]{64}$'; then echo "::error::OSV-Scanner: the pinned SHA-256 for $asset is missing or malformed in the env block - refusing to download an unverifiable binary. FAILING CLOSED (C4/C5)."; exit 1; fi
+          curl -sSfL --connect-timeout 10 --speed-limit 1024 --speed-time 30 --retry 3 --retry-all-errors --retry-delay 2 --retry-max-time 60 "https://github.com/google/osv-scanner/releases/download/v${ver}/${asset}" -o "$RUNNER_TEMP/osv-scanner"
+          # CI-audit HIGH#1: verify the pinned SHA-256 BEFORE chmod/execute. A hosted runner is ephemeral, but a
+          # poisoned mirror or a MITM'd download is still caught here; bump OSV_SCANNER_SHA256 with the version.
+          actual=$(sha256sum "$RUNNER_TEMP/osv-scanner" | cut -d' ' -f1)
+          if [ "$actual" != "$want" ]; then
+            echo "::error::OSV-Scanner download checksum mismatch for $asset: expected $want got $actual. Refusing to execute an unverified binary (CI-audit HIGH#1). If OSV_SCANNER_VERSION was bumped, update OSV_SCANNER_SHA256 (X64) and OSV_SCANNER_SHA256_ARM64 (ARM64)."
+            exit 1
+          fi
+          chmod +x "$RUNNER_TEMP/osv-scanner"
+          "$RUNNER_TEMP/osv-scanner" --version
+      - name: OSV-Scanner SCA gate (C5 — three states, fail-closed)
+        run: |
+          set +e
+          # The report goes to RUNNER_TEMP, OUTSIDE the checkout: written into the scanned tree, it was itself
+          # scanned by the Semgrep step below (detect-insecure-websocket false positives inside osv-results.json
+          # in three repos). Every reader of it (this step, the artifact, the enrichment) takes the same path.
+          osv_out="$RUNNER_TEMP/osv-results.json"
+          "$RUNNER_TEMP/osv-scanner" scan source -r . --allow-no-lockfiles --format json --output "$osv_out"
+          rc=$?
+          # Exit codes verified with v2.5.0: 0 = no known vulns; 1 = vulnerabilities found; anything
+          # else (127/128 ...) = the scan could not run. --allow-no-lockfiles keeps a repo with no
+          # manifests (a PowerShell-only repo) at exit 0 rather than erroring. Three outcomes kept
+          # permanently distinct, never collapsed (C3/C5): clean -> pass, findings -> evaluate vs the
+          # threshold, could-not-run -> FAIL LOUDLY. A broken scanner is never read as a clean repo.
+          if [ "$rc" = "0" ]; then
+            echo "OSV-Scanner: no known vulnerabilities in any committed manifest."
+            exit 0
+          fi
+          if [ "$rc" != "1" ]; then
+            echo "--- osv-results.json (head) ---"; head -c 2000 "$osv_out" 2>/dev/null || true
+            echo "::error::OSV-Scanner could not run (exit $rc). A scan that did not run is NOT a clean scan (C3/C5) - failing closed. Check the runner can reach the release download and osv.dev."
+            exit 1
+          fi
+          # rc == 1: OSV found vulnerabilities. Decide pass/fail on machine-readable JSON (never prose),
+          # at the config-driven OSV_SEVERITY_THRESHOLD; a group with no CVSS score stays a finding.
+          OSV_REPORT="$osv_out" node - <<'EOF'
+          const fs=require("fs");
+          // CVSS base-score floor per band; 'any' fails on every finding (the default C3 posture).
+          const BAND={any:0.0,low:0.1,medium:4.0,high:7.0,critical:9.0};
+          const thrName=(process.env.OSV_SEVERITY_THRESHOLD||"any").trim().toLowerCase();
+          const thr=BAND[thrName];
+          if(thr===undefined){console.log(`::error::OSV_SEVERITY_THRESHOLD='${thrName}' is not one of any, low, medium, high, critical. Refusing to guess a threshold for a security gate.`);process.exit(1)}
+          let doc;try{doc=JSON.parse(fs.readFileSync(process.env.OSV_REPORT,"utf8"))}catch(e){console.log(`::error::OSV output was not valid JSON (${e.message}). A scan whose result cannot be read is NOT clean - failing closed (C5).`);process.exit(1)}
+          const sum=process.env.GITHUB_STEP_SUMMARY,w=s=>{if(sum){try{fs.appendFileSync(sum,s+"\n")}catch{}}};
+          const findings=[],below=[];
+          for(const r of (doc.results||[]))for(const p of (r.packages||[])){
+            const pk=`${p.package&&p.package.name}@${p.package&&p.package.version}`;
+            const vulns=p.vulnerabilities||[],groups=p.groups||[];
+            // Vulnerabilities with no severity grouping cannot be ranked -> fail-closed as UNKNOWN.
+            if(vulns.length&&!groups.length){findings.push({pk,ids:vulns.map(v=>v.id).join(","),sev:"UNKNOWN"});continue}
+            for(const g of groups){
+              const ms=g.max_severity;
+              const score=(ms===undefined||ms===null||ms==="")?NaN:parseFloat(ms);
+              const rec={pk,ids:(g.ids||[]).join(","),sev:isNaN(score)?"UNKNOWN":String(ms)};
+              // Unknown/unparseable CVSS counts as a finding: no score is not permission to ignore it.
+              if(isNaN(score)||score>=thr)findings.push(rec);else below.push(rec);
+            }
+          }
+          if(findings.length){
+            findings.forEach(r=>console.log(`${r.sev.padEnd(8)} ${r.pk} ${r.ids}`));
+            w("### :x: OSV-Scanner: vulnerable dependencies");w("");w(`Threshold \`${thrName}\`.`);w("");
+            findings.forEach(r=>w(`- \`${r.pk}\` — **${r.sev}** (${r.ids})`));
+            console.log(`::error::${findings.length} vulnerable dependency group(s) at or above severity ${thrName} (C5). Upgrade or replace them, or record a decision note.`);
+            process.exit(1);
+          }
+          if(below.length){
+            below.forEach(r=>console.log(`below threshold: ${r.sev.padEnd(8)} ${r.pk} ${r.ids}`));
+            console.log(`::warning::${below.length} vulnerable dependency group(s) BELOW the ${thrName} threshold. Not failing the build, but these are real findings - raise the threshold or fix them.`);
+          }
+          console.log(`OSV-Scanner: vulnerabilities present but all below threshold ${thrName}.`);
+          EOF
+      - name: OSV results (artifact — enrichment input / manual triage)
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02   # v4.6.2 — SHA-pinned (C4)
+        with:
+          name: osv-results
+          path: ${{ runner.temp }}/osv-results.json   # written under RUNNER_TEMP by the gate step, never in the checkout
+          if-no-files-found: ignore
+
+      # ---------- SAST: Semgrep OSS (free, unlimited; NOT CodeQL — code-scanning needs paid GHAS on private repos) ----------
+      - name: Semgrep OSS SAST gate (C5 - ONE scan, ERROR blocks, WARNING reports)
+        if: ${{ !cancelled() }}   # evaluate independently of the SCA gate above
+        run: |
+          set +e
+          # A JOB-PRIVATE pipx home and bin directory, so the semgrep this gate runs is the one installed HERE at
+          # SEMGREP_VERSION. A runner image that preinstalls semgrep (a CI_RUNS_ON pool image may), or that points
+          # PIPX_HOME / PIPX_BIN_DIR at a shared location (ubuntu-latest sets /opt/pipx), could otherwise answer
+          # `pipx install` with "already installed" and exit 0, or put an image copy first on PATH.
+          export PIPX_HOME="$RUNNER_TEMP/pipx" PIPX_BIN_DIR="$RUNNER_TEMP/pipx/bin"
+          export PATH="$PIPX_BIN_DIR:$HOME/.local/bin:$PATH"
+          # pipx (preinstalled on ubuntu-latest; a CI_RUNS_ON pool image must carry it) isolates Semgrep and dodges
+          # PEP 668 externally-managed pip failures. Install failure fails the gate CLOSED - a SAST gate that could
+          # not run is not a pass.
+          if ! pipx install "semgrep==${SEMGREP_VERSION:-1.172.0}" >/dev/null; then echo "::error::Semgrep install failed - the SAST gate could not run, failing closed (C5)."; exit 1; fi
+          if [ "$(command -v semgrep)" != "$PIPX_BIN_DIR/semgrep" ]; then echo "::error::semgrep on PATH is '$(command -v semgrep)', not the copy this step just installed in $PIPX_BIN_DIR - refusing to run an unpinned semgrep, failing closed (C5)."; exit 1; fi
+          # Both outputs go to RUNNER_TEMP, OUTSIDE the scanned checkout, so neither this scan nor a later one
+          # reads a report as source. The coverage step and the artifact read the same two paths.
+          sg_json="$RUNNER_TEMP/semgrep-results.json"
+          sg_sarif="$RUNNER_TEMP/semgrep-results.sarif"
+          cfgargs=""
+          # Repo-local custom rules: the security-coding rollout drops canonical rules into .semgrep/. Included
+          # AS WELL AS the registry rulesets, guarded so an absent/empty .semgrep/ never fails the gate.
+          if [ -d .semgrep ] && [ -n "$(find .semgrep -type f 2>/dev/null | head -n1)" ]; then cfgargs="--config .semgrep/"; fi
+          # `set -f` while the config list is split: SEMGREP_CONFIG is deliberately unquoted so a
+          # space-separated list becomes separate --config args, and without noglob a ruleset name
+          # containing a glob character would be expanded against the working directory instead.
+          set -f
+          for c in ${SEMGREP_CONFIG:-p/default}; do cfgargs="$cfgargs --config $c"; done
+          set +f
+          # SEMGREP_TIMEOUT / SEMGREP_TIMEOUT_THRESHOLD are config (H1) that lands in argv. Validate each
+          # so a fat-fingered or poisoned value fails the gate CLOSED.
+          # SEMGREP_TIMEOUT must be a POSITIVE integer: Semgrep reads 0 as "no time limit at all", so a
+          # single pathological file would run until the job's own timeout killed it - a red build whose
+          # cause is unreadable, in place of the bounded per-rule budget this knob exists to
+          # set. Raise it; never zero it. A leading zero is rejected with it (an octal-looking budget is
+          # a typo, not a decision).
+          timeout="${SEMGREP_TIMEOUT:-300}"
+          case "$timeout" in ''|*[!0-9]*|0*) echo "::error::SEMGREP_TIMEOUT='$timeout' is not a positive integer (0 means NO limit in Semgrep, which hangs the job instead of bounding a rule) - refusing to run (H1 config, C5 fail closed)."; exit 1 ;; esac
+          tthresh="${SEMGREP_TIMEOUT_THRESHOLD:-0}"
+          case "$tthresh" in ''|*[!0-9]*) echo "::error::SEMGREP_TIMEOUT_THRESHOLD='$tthresh' is not an integer - refusing to run (H1 config, C5 fail closed)."; exit 1 ;; esac
+          # Pre-delete both outputs, as the other scanner steps do: a report left by an earlier run in a
+          # reused workspace would otherwise be graded as this run's, and a scan that died before writing
+          # would be read as the previous scan's clean result.
+          rm -f "$sg_json" "$sg_sarif"
+          # ONE SCAN, BOTH SEVERITIES. `--severity` FILTERS rather than setting a floor, so asking for
+          # ERROR alone leaves every WARNING rule the registry ships absent from the report entirely,
+          # not merely non-blocking. Repeating the flag asks for both in a single pass, which is also
+          # half the runtime of scanning twice. INFO is deliberately NOT requested: it is registry noise
+          # nobody is going to read, and an annotation nobody reads is worse than no annotation.
+          # ONE run writes BOTH outputs: the SARIF is the uploaded artifact, and the JSON is both the
+          # gate of record below AND what the coverage check reads - Semgrep records a timed-out or
+          # errored rule in errors[], never as a SARIF result, so the artifact alone cannot prove the
+          # scan was complete.
+          # `set -f` again here, not just around the SEMGREP_CONFIG split above: $cfgargs is expanded
+          # unquoted below so the --config values split into separate args, and without noglob a
+          # ruleset name containing a glob character would be expanded against the working directory
+          # at THIS use site too.
+          set -f
+          # shellcheck disable=SC2086 # $cfgargs is split on purpose into separate --config args, under set -f
+          semgrep scan $cfgargs --severity ERROR --severity WARNING --error --quiet \
+            --timeout "$timeout" --timeout-threshold "$tthresh" \
+            --sarif-output "$sg_sarif" --json-output "$sg_json" .
+          rc=$?
+          set +f
+          # THE EXIT CODE IS NO LONGER THE GATE, because it cannot be: with both severities in one run,
+          # `--error` returns 1 for a WARNING-only scan exactly as it does for an ERROR, and WARNING must
+          # not block. 0 and 1 both mean "Semgrep ran"; anything else is an internal error and still
+          # fails closed (C5). The severity split is decided from the JSON below.
+          if [ "$rc" != "0" ] && [ "$rc" != "1" ]; then
+            echo "::error::Semgrep could not run (exit $rc) - an internal error, not a clean scan. Failing closed (C5)."
+            exit 1
+          fi
+          if [ ! -f "$sg_json" ]; then
+            echo "::error::Semgrep exited $rc but wrote no semgrep-results.json - the gate cannot read what it found, failing closed (C5)."
+            exit 1
+          fi
+          SG_JSON="$sg_json" node -e '
+            const fs = require("fs");
+            let d;
+            try { d = JSON.parse(fs.readFileSync(process.env.SG_JSON, "utf8")); }
+            catch (e) { console.log("::error::semgrep-results.json is unreadable (" + e.message + ") - the SAST gate cannot grade the scan, failing closed (C5)."); process.exit(1); }
+            const oneLine = (s) => String(s == null ? "" : s).replace(/\s+/g, " ").trim();
+            const sev = (r) => oneLine(r.extra && r.extra.severity).toUpperCase();
+            const at = (r) => r.path + ":" + ((r.start && r.start.line) || 0);
+            const results = d.results || [];
+            const errors = results.filter((r) => sev(r) === "ERROR");
+            const warnings = results.filter((r) => sev(r) === "WARNING");
+            // WARNING first, so the blocking list is the last thing in the log.
+            for (const r of warnings) console.log("::warning::" + at(r) + " " + r.check_id + " " + oneLine(r.extra && r.extra.message));
+            for (const r of errors) console.log("::error::" + at(r) + " " + r.check_id + " " + oneLine(r.extra && r.extra.message));
+            // A result at neither severity can only come from a future Semgrep that ignores --severity.
+            // Report it rather than silently dropping it; it does not block.
+            const other = results.length - errors.length - warnings.length;
+            if (other > 0) console.log("::warning::" + other + " Semgrep result(s) at a severity this gate did not request - reported, not blocking.");
+            if (errors.length) {
+              console.log("::error::Semgrep found " + errors.length + " ERROR-severity code finding(s) (C5 SAST). Fix them, or record a decision note. The " + warnings.length + " WARNING finding(s) above do not block.");
+              process.exit(1);
+            }
+            console.log("Semgrep: 0 ERROR-severity findings, " + warnings.length + " WARNING-severity finding(s) reported and not blocking.");
+          '
+
+      # ---------- SAST coverage: what Semgrep could NOT analyse (a clean exit 0 is not proof of coverage) ----------
+      - name: Semgrep coverage check (C5, fail closed on a dropped rule)
+        if: ${{ !cancelled() }}
+        run: |
+          # Semgrep exits 0 when a rule times out on a file and when a file is skipped: the rule simply
+          # produces no finding for it. The exit code cannot express "I did not look", so this step reads
+          # the machine-readable report instead and fails closed on any evidence of incomplete analysis.
+          # ONE report covers BOTH severities now (the gate above runs a single ERROR+WARNING scan), so
+          # this is the whole coverage picture - there is no second scan whose coverage goes unchecked.
+          set -e
+          # The scan step wrote both reports under RUNNER_TEMP, outside the checkout.
+          sg_json="$RUNNER_TEMP/semgrep-results.json"
+          sg_sarif="$RUNNER_TEMP/semgrep-results.sarif"
+          if [ ! -f "$sg_json" ]; then
+            echo "::error::semgrep-results.json missing - the SAST gate cannot prove what it scanned, failing closed (C5)."
+            exit 1
+          fi
+          SG_JSON="$sg_json" SG_SARIF="$sg_sarif" node -e '
+            const fs = require("fs");
+            let d;
+            try { d = JSON.parse(fs.readFileSync(process.env.SG_JSON, "utf8")); }
+            catch (e) { console.log("::error::semgrep-results.json is unreadable (" + e.message + ") - the SAST gate cannot prove what it scanned, failing closed (C5)."); process.exit(1); }
+            const oneLine = (s) => String(s == null ? "" : s).replace(/\s+/g, " ").trim();
+            // errors[] is NOT one severity. Semgrep reports a file it could not fully parse at
+            // level "warn" and STILL scans the parts it understood; it reports a dropped rule
+            // (timeout, OOM, a missing plugin) as a COVERAGE LOSS. Failing on every entry made a
+            // partially-parsed vendored .js fail the build with the same message a genuinely
+            // unscanned file gets, and the fix people reach for is deleting the check. So: the
+            // coverage-loss types below, and anything at level "error", fail closed; a warn-level
+            // parse complaint is annotated and kept in the artifact for a human.
+            const COVERAGE_LOSS = ["Timeout", "TimeoutDuringInterfile", "OutOfMemory",
+                                   "OutOfMemoryDuringInterfile", "MaxMemory", "MissingPlugin"];
+            let fail = 0, warned = 0;
+            for (const e of (d.errors || [])) {
+              let type = e.type;
+              if (Array.isArray(type)) type = type[0];   // PartialParsing arrives as ["PartialParsing", [spans]]
+              type = oneLine(type);
+              const level = oneLine(e.level).toLowerCase();
+              const path = e.path || "<unknown>";
+              // An unrecognised level is treated as an error: a report we cannot grade is not a
+              // report that says everything was fine.
+              const isLoss = COVERAGE_LOSS.indexOf(type) !== -1 || level === "error" ||
+                             (level !== "warn" && level !== "warning");
+              if (isLoss) {
+                console.log("::error::Semgrep error (" + type + ", level " + (level || "<none>") + ") on " + path +
+                            ": " + oneLine(e.message) +
+                            " - rules did not run over this file, which is not a clean scan (C5).");
+                fail++;
+              } else {
+                // Typically PartialParsing / SyntaxError: Semgrep read what it could and exited 0.
+                // Reported, not blocking - it is in semgrep-results.json in the artifact either way.
+                console.log("::warning::Semgrep " + type + " (level " + level + ") on " + path + ": " + oneLine(e.message) +
+                            " - the file was analysed only as far as it parsed. Fix the file or exclude it deliberately (C5).");
+                warned++;
+              }
+            }
+            // paths.skipped is only populated on a verbose run, so its absence proves nothing and must
+            // never be read as "nothing was skipped". When it IS there, a timeout reason is a dropped rule.
+            for (const s of ((d.paths && d.paths.skipped) || [])) {
+              const reason = oneLine(s.reason);
+              if (/timeout|timed.?out/i.test(reason)) {
+                console.log("::error::Semgrep skipped " + (s.path || "<unknown>") + " (" + reason + ") - raise SEMGREP_TIMEOUT rather than accepting the gap (C5).");
+                fail++;
+              }
+            }
+            // The SARIF the artifact carries reports tool trouble in its own place. Read it too, so the
+            // gate holds if a future edit keeps SARIF and drops the JSON side-output.
+            try {
+              const s = JSON.parse(fs.readFileSync(process.env.SG_SARIF, "utf8"));
+              for (const run of (s.runs || [])) {
+                for (const inv of (run.invocations || [])) {
+                  for (const n of (inv.toolExecutionNotifications || [])) {
+                    if (n.level === "error") {
+                      console.log("::error::Semgrep SARIF toolExecutionNotification (error): " + oneLine(n.message && n.message.text) + " (C5).");
+                      fail++;
+                    }
+                  }
+                }
+              }
+            } catch (e) { /* no SARIF, or unreadable: the JSON above is the gate of record */ }
+            if (fail) { console.log("::error::" + fail + " Semgrep coverage failure(s): the scan is incomplete, so exit 0 would have been a green check produced by not looking (C5)."); process.exit(1); }
+            const scanned = ((d.paths && d.paths.scanned) || []).length;
+            console.log("Semgrep coverage: " + scanned + " files scanned, no dropped rules, no timeout-skipped files" +
+                        (warned ? " (" + warned + " non-blocking parse warning(s) above)" : "") + ".");
+          '
+      - name: Semgrep results (SARIF artifact)
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02   # v4.6.2 — SHA-pinned (C4)
+        with:
+          name: semgrep-results
+          # BOTH outputs of the ONE scan: the SARIF for viewers, the JSON because it is the only one
+          # carrying errors[] and paths.skipped[] - i.e. the evidence of what the scan could NOT
+          # analyse - and because it is what the gate itself graded. There is no second report: ERROR
+          # and WARNING findings are both in here.
+          # Both live under RUNNER_TEMP (written there by the scan step), never in the checkout.
+          path: |
+            ${{ runner.temp }}/semgrep-results.sarif
+            ${{ runner.temp }}/semgrep-results.json
+          if-no-files-found: ignore
+
+      # ---------- PowerShell: PSScriptAnalyzer security rules (OSV and Semgrep cover neither .ps1) ----------
+      - name: PSScriptAnalyzer security gate (C5 PowerShell carve-out — see profiles/windows-ad.md)
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # Self-skip GREEN when the repo has no PowerShell — a real "no PS here" pass, not a blanked gate.
+          $ps1 = Get-ChildItem -Path . -Recurse -Include *.ps1,*.psm1,*.psd1 -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -notmatch '[\\/](\.git|node_modules|bin|obj|dist|build|packages|Old)[\\/]' }
+          if (-not $ps1) { Write-Host 'PSScriptAnalyzer: no PowerShell files in this repo - nothing to scan.'; exit 0 }
+          $ver = if ($env:PSSA_VERSION) { $env:PSSA_VERSION } else { '1.24.0' }
+          Install-Module PSScriptAnalyzer -RequiredVersion $ver -Scope CurrentUser -Force -SkipPublisherCheck
+          # Curated SECURITY rules only (config-driven). Any finding from these fails the build; this is
+          # PowerShell's only automated coverage, so it is a real gate, not a dashboard. DC-bound .ps1
+          # headed for NETLOGON/SYSVOL additionally pass local validate_ps_clm (CLM/StrictMode) - that
+          # lane is operator-run, not a hosted-runner step.
+          $rules = if ($env:PSSA_SECURITY_RULES) { $env:PSSA_SECURITY_RULES -split '[,\s]+' | Where-Object { $_ } } else {
+            @('PSAvoidUsingPlainTextForPassword','PSAvoidUsingConvertToSecureStringWithPlainText',
+              'PSUsePSCredentialType','PSAvoidUsingUsernameAndPasswordParams','PSAvoidUsingInvokeExpression',
+              'PSAvoidUsingComputerNameHardcoded','PSAvoidUsingBrokenHashAlgorithms') }
+          $findings = @(Invoke-ScriptAnalyzer -Path . -Recurse -IncludeRule $rules -ErrorAction Continue)
+          if ($findings.Count) {
+            $findings | ForEach-Object { Write-Host ("{0}:{1} {2} - {3}" -f $_.ScriptName, $_.Line, $_.RuleName, $_.Message) }
+            Write-Host "::error::PSScriptAnalyzer found $($findings.Count) PowerShell security finding(s) (C5). Fix them, or record a decision note."
+            exit 1
+          }
+          Write-Host "PSScriptAnalyzer: $($ps1.Count) PowerShell file(s) scanned, no security-rule findings."
+
+      # ---------- IaC / misconfig: Trivy (Dockerfiles + IaC; C5 defense-in-depth) ----------
+      # Raw checksum-verified download rather than aquasecurity/trivy-action: SHA-pinning the ACTION pins the
+      # wrapper, not the scanner - the action still fetches a Trivy binary chosen at runtime, which is the exact
+      # unverified-executable hole CI-audit HIGH#1 exists to close. Same reasoning as the OSV step above, and it
+      # keeps this template byte-for-byte parallel with ci-selfhosted.yml. Trivy covers the Dockerfile/IaC
+      # surface; zizmor (below) covers GitHub Actions workflow security.
+      - name: Trivy IaC/misconfig gate (C5 — three states, fail-closed)
+        if: ${{ !cancelled() }}
+        run: |
+          set -e
+          ver="${TRIVY_VERSION:-0.73.0}"
+          # Release asset AND pin by RUNNER_ARCH (see the env block); any other architecture fails closed
+          # BEFORE downloading.
+          case "${RUNNER_ARCH:-}" in
+            X64)   asset="trivy_${ver}_Linux-64bit.tar.gz"; want="$TRIVY_SHA256" ;;
+            ARM64) asset="trivy_${ver}_Linux-ARM64.tar.gz"; want="$TRIVY_SHA256_ARM64" ;;
+            *)
+              echo "::error::Trivy could not run: RUNNER_ARCH='${RUNNER_ARCH:-}' is neither X64 nor ARM64, so this template has no pinned Trivy asset or SHA-256 for this runner. A scan that did not run is NOT a clean scan (C3/C5) - failing closed."
+              exit 1 ;;
+          esac
+          # Defence in depth: never compare against an empty or malformed pin (an empty want would match an empty hash).
+          if ! printf '%s' "$want" | grep -Eq '^[0-9a-f]{64}$'; then echo "::error::Trivy: the pinned SHA-256 for $asset is missing or malformed in the env block - refusing to download an unverifiable binary. FAILING CLOSED (C4/C5)."; exit 1; fi
+          curl -sSfL --connect-timeout 10 --speed-limit 1024 --speed-time 30 --retry 3 --retry-all-errors --retry-delay 2 --retry-max-time 60 "https://github.com/aquasecurity/trivy/releases/download/v${ver}/${asset}" -o "$RUNNER_TEMP/trivy.tgz"
+          actual=$(sha256sum "$RUNNER_TEMP/trivy.tgz" | cut -d' ' -f1)
+          if [ "$actual" != "$want" ]; then
+            echo "::error::Trivy download checksum mismatch for $asset: expected $want got $actual. Refusing to extract an unverified binary (CI-audit HIGH#1). If TRIVY_VERSION was bumped, update TRIVY_SHA256 (X64) and TRIVY_SHA256_ARM64 (ARM64)."
+            exit 1
+          fi
+          tar -xzf "$RUNNER_TEMP/trivy.tgz" -C "$RUNNER_TEMP" trivy
+          chmod +x "$RUNNER_TEMP/trivy"
+          "$RUNNER_TEMP/trivy" --version
+          # --exit-code 0: never let Trivy's own exit code decide pass/fail - a real scanner error also returns
+          # non-zero and would be indistinguishable from findings. Write JSON and parse it, exactly like OSV.
+          # --skip-check-update: use the misconfig checks bundled INSIDE this hash-verified trivy binary rather
+          # than pulling the policy pack from an OCI registry at runtime (that runtime OCI fetch was an
+          # unverified-code hole, same class as the package-manager residual risk noted in the env block).
+          set +e
+          # The report goes to RUNNER_TEMP, OUTSIDE the scanned checkout; the reader below and the artifact use it.
+          tv_out="$RUNNER_TEMP/trivy-config.json"
+          "$RUNNER_TEMP/trivy" config --severity "${TRIVY_SEVERITY:-HIGH,CRITICAL}" --skip-check-update --format json --exit-code 0 --output "$tv_out" .
+          rc=$?
+          if [ $rc -ne 0 ]; then
+            echo "::error::Trivy could not run (exit $rc). A scan that did not run is NOT a clean scan (C3/C5) - failing closed."
+            exit 1
+          fi
+          if [ ! -f "$tv_out" ]; then
+            echo "::error::Trivy produced no JSON - the IaC scan could not run, failing closed (C5)."
+            exit 1
+          fi
+          TV_REPORT="$tv_out" node - <<'EOF'
+          const fs=require("fs");
+          let doc;try{doc=JSON.parse(fs.readFileSync(process.env.TV_REPORT,"utf8"))}catch(e){console.log(`::error::Trivy output was not valid JSON (${e.message}) - a scan whose result cannot be read is NOT clean, failing closed (C5).`);process.exit(1)}
+          const sev=(process.env.TRIVY_SEVERITY||"HIGH,CRITICAL");
+          const sum=process.env.GITHUB_STEP_SUMMARY,w=s=>{if(sum){try{fs.appendFileSync(sum,s+"\n")}catch{}}};
+          const findings=[];
+          for(const r of (doc.Results||[]))for(const m of (r.Misconfigurations||[])){findings.push({sev:m.Severity,id:m.ID,title:m.Title,target:r.Target})}
+          if(findings.length){
+            findings.forEach(f=>console.log(`${String(f.sev).padEnd(8)} ${f.id} ${f.title} (${f.target})`));
+            w("### :x: Trivy: IaC/config misconfigurations");w("");w(`Severity gate \`${sev}\`.`);w("");
+            findings.forEach(f=>w(`- \`${f.id}\` ${f.title} — **${f.sev}** (${f.target})`));
+            console.log(`::error::${findings.length} Trivy misconfiguration(s) at severity ${sev} (C5). Fix the Dockerfile/IaC, or record a decision note.`);
+            process.exit(1);
+          }
+          console.log(`Trivy: no ${sev} misconfigurations in Dockerfiles/IaC.`);
+          EOF
+      - name: Trivy results (artifact)
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02   # v4.6.2 — SHA-pinned (C4)
+        with:
+          name: trivy-results
+          path: ${{ runner.temp }}/trivy-config.json   # written under RUNNER_TEMP by the gate step, never in the checkout
+          if-no-files-found: ignore
+
+      # ---------- GitHub Actions workflow SECURITY: zizmor (unpinned actions, template-injection, ...) ----------
+      - name: zizmor workflow-security gate (C5 — three states, fail-closed)
+        if: ${{ !cancelled() }}
+        run: |
+          if [ ! -d .github/workflows ]; then echo "zizmor: no .github/workflows - nothing to audit."; exit 0; fi
+          # Release binary, not `pipx install zizmor==...`: a pip install resolves and executes code from PyPI
+          # that no checksum here covers, so it cannot satisfy CI-audit HIGH#1. The static binary can be pinned
+          # by content. Download failure or checksum mismatch fails the gate CLOSED - a workflow-security gate
+          # that could not run is not a pass.
+          set -e
+          ver="${ZIZMOR_VERSION:-1.29.0}"
+          # Release asset AND pin by RUNNER_ARCH (see the env block); any other architecture fails closed
+          # BEFORE downloading.
+          case "${RUNNER_ARCH:-}" in
+            X64)   asset="zizmor-x86_64-unknown-linux-gnu.tar.gz";  want="$ZIZMOR_SHA256" ;;
+            ARM64) asset="zizmor-aarch64-unknown-linux-gnu.tar.gz"; want="$ZIZMOR_SHA256_ARM64" ;;
+            *)
+              echo "::error::zizmor could not run: RUNNER_ARCH='${RUNNER_ARCH:-}' is neither X64 nor ARM64, so this template has no pinned zizmor asset or SHA-256 for this runner. A workflow-security audit that could not run is NOT a pass - failing closed (C5)."
+              exit 1 ;;
+          esac
+          # Defence in depth: never compare against an empty or malformed pin (an empty want would match an empty hash).
+          if ! printf '%s' "$want" | grep -Eq '^[0-9a-f]{64}$'; then echo "::error::zizmor: the pinned SHA-256 for $asset is missing or malformed in the env block - refusing to download an unverifiable binary. FAILING CLOSED (C4/C5)."; exit 1; fi
+          curl -sSfL --connect-timeout 10 --speed-limit 1024 --speed-time 30 --retry 3 --retry-all-errors --retry-delay 2 --retry-max-time 60 "https://github.com/zizmorcore/zizmor/releases/download/v${ver}/${asset}" -o "$RUNNER_TEMP/zizmor.tgz"
+          actual=$(sha256sum "$RUNNER_TEMP/zizmor.tgz" | cut -d' ' -f1)
+          if [ "$actual" != "$want" ]; then
+            echo "::error::zizmor download checksum mismatch for $asset: expected $want got $actual. Refusing to extract an unverified binary (CI-audit HIGH#1). If ZIZMOR_VERSION was bumped, update ZIZMOR_SHA256 (X64) and ZIZMOR_SHA256_ARM64 (ARM64) (zizmor publishes no checksum file - recompute from the release asset)."
+            exit 1
+          fi
+          tar -xzf "$RUNNER_TEMP/zizmor.tgz" -C "$RUNNER_TEMP" zizmor
+          chmod +x "$RUNNER_TEMP/zizmor"
+          "$RUNNER_TEMP/zizmor" --version
+          set +e
+          lvl="${ZIZMOR_MIN_SEVERITY:-medium}"
+          # zizmor writes SARIF to STDOUT (no --output flag). --no-online-audits keeps it deterministic and
+          # token-free (offline audits cover unpinned-uses + template-injection). The SARIF goes to RUNNER_TEMP,
+          # outside the checkout; the reader below and the artifact use the same path.
+          zz_out="$RUNNER_TEMP/zizmor-results.sarif"
+          "$RUNNER_TEMP/zizmor" --no-online-audits --min-severity "$lvl" --format sarif .github/workflows > "$zz_out" 2>/dev/null
+          rc=$?
+          # CI-audit HIGH#3: fail on the EXIT CODE first, BEFORE parsing the SARIF. zizmor's contract in
+          # --format sarif mode (verified against 1.29.0): 0 = successful audit (any findings are IN the SARIF -
+          # the 11-14 finding codes are suppressed under SARIF output); 1 = audit error; 2 = bad args; 3 = no
+          # inputs. So ANY nonzero here means the AUDIT ITSELF FAILED, not "found issues" - a valid-but-empty
+          # SARIF emitted alongside an audit error would otherwise read clean. Fail closed (C5).
+          if [ $rc -ne 0 ]; then
+            echo "::error::zizmor exited $rc - an audit error / bad args / no inputs, NOT findings (SARIF mode does not use finding exit codes). A workflow-security audit that could not run is NOT a pass - failing closed (C5)."
+            exit 1
+          fi
+          # Findings themselves are read from the SARIF at --min-severity below; it must exist and be non-empty.
+          if [ ! -s "$zz_out" ]; then
+            echo "::error::zizmor produced no SARIF - the workflow-security audit could not run, failing closed (C5)."
+            exit 1
+          fi
+          ZZ_REPORT="$zz_out" node - <<'EOF'
+          const fs=require("fs");
+          let doc;try{doc=JSON.parse(fs.readFileSync(process.env.ZZ_REPORT,"utf8"))}catch(e){console.log(`::error::zizmor SARIF was not valid JSON (${e.message}) - failing closed (C5).`);process.exit(1)}
+          const lvl=process.env.ZIZMOR_MIN_SEVERITY||"medium";
+          const results=[];for(const run of (doc.runs||[]))for(const r of (run.results||[]))results.push(r);
+          if(results.length){
+            results.forEach(r=>{const loc=(r.locations&&r.locations[0]&&r.locations[0].physicalLocation&&r.locations[0].physicalLocation.artifactLocation&&r.locations[0].physicalLocation.artifactLocation.uri)||"";console.log(`${r.ruleId} ${loc}`)});
+            console.log(`::error::${results.length} zizmor workflow-security finding(s) at/above '${lvl}' (C5). SHA-pin third-party actions (C4), remove template injection, tighten permissions - or raise ZIZMOR_MIN_SEVERITY with justification.`);
+            process.exit(1);
+          }
+          console.log(`zizmor: no workflow-security findings at/above '${lvl}'.`);
+          EOF
+      - name: zizmor results (SARIF artifact)
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02   # v4.6.2 — SHA-pinned (C4)
+        with:
+          name: zizmor-results
+          path: ${{ runner.temp }}/zizmor-results.sarif   # written under RUNNER_TEMP by the gate step, never in the checkout
+          if-no-files-found: ignore
+
+      # ---------- Workflow correctness: actionlint (best-effort lint, NOT a security gate) ----------
+      - name: actionlint download + checksum verify (gating — CI-audit MED)
+        id: actionlint_verify
+        # SPLIT from the lint step below: this step has NO continue-on-error, so the download / checksum-verify
+        # exit 1 is a REAL gate. The old single continue-on-error step SWALLOWED a checksum mismatch (the verify's
+        # exit 1 was neutered by continue-on-error). The lint INVOCATION stays best-effort in the next step.
+        if: ${{ !cancelled() }}
+        run: |
+          set -e
+          if [ ! -d .github/workflows ]; then echo "actionlint: no .github/workflows - nothing to fetch."; exit 0; fi
+          ver="${ACTIONLINT_VERSION:-1.7.12}"
+          # Release asset AND pin by RUNNER_ARCH (see the env block); any other architecture fails closed
+          # BEFORE downloading, so no binary reaches the lint step below.
+          case "${RUNNER_ARCH:-}" in
+            X64)   asset="actionlint_${ver}_linux_amd64.tar.gz"; want="$ACTIONLINT_SHA256" ;;
+            ARM64) asset="actionlint_${ver}_linux_arm64.tar.gz"; want="$ACTIONLINT_SHA256_ARM64" ;;
+            *)
+              echo "::error::actionlint: RUNNER_ARCH='${RUNNER_ARCH:-}' is neither X64 nor ARM64, so this template has no pinned actionlint asset or SHA-256 for this runner - failing closed (CI-audit HIGH#1)."
+              exit 1 ;;
+          esac
+          # Defence in depth: never compare against an empty or malformed pin (an empty want would match an empty hash).
+          if ! printf '%s' "$want" | grep -Eq '^[0-9a-f]{64}$'; then echo "::error::actionlint: the pinned SHA-256 for $asset is missing or malformed in the env block - refusing to download an unverifiable binary. FAILING CLOSED (C4/C5)."; exit 1; fi
+          curl -sSfL --connect-timeout 10 --speed-limit 1024 --speed-time 30 --retry 3 --retry-all-errors --retry-delay 2 --retry-max-time 60 "https://github.com/rhysd/actionlint/releases/download/v${ver}/${asset}" -o "$RUNNER_TEMP/actionlint.tgz"
+          # Even a best-effort tool is checksum-verified before it runs (CI-audit HIGH#1 applies to EVERY binary).
+          actual=$(sha256sum "$RUNNER_TEMP/actionlint.tgz" | cut -d' ' -f1)
+          if [ "$actual" != "$want" ]; then
+            # CI-audit HIGH#2: a mismatch must leave NO runnable actionlint behind. Removing a stale/partial binary
+            # that FAILS (locked / ACL) is itself fatal - never fall through with a bad binary on disk.
+            if ! rm -f "$RUNNER_TEMP/actionlint"; then
+              echo "::error::actionlint checksum mismatch AND the stale binary could not be removed - failing closed (CI-audit HIGH#2)."
+              exit 1
+            fi
+            echo "::error::actionlint download checksum mismatch for $asset: expected $want got $actual (CI-audit HIGH#1). If ACTIONLINT_VERSION was bumped, update ACTIONLINT_SHA256 (X64) and ACTIONLINT_SHA256_ARM64 (ARM64)."
+            exit 1
+          fi
+          tar -xzf "$RUNNER_TEMP/actionlint.tgz" -C "$RUNNER_TEMP" actionlint
+          chmod +x "$RUNNER_TEMP/actionlint"
+          echo "actionlint: downloaded and checksum-verified."
+
+      - name: actionlint workflow lint (best-effort)
+        # Non-blocking lint ONLY, and it runs ONLY when the verify step above SUCCEEDED (CI-audit HIGH#2): gating on
+        # steps.actionlint_verify.outcome - not merely !cancelled() - means a checksum-failed binary never reaches
+        # this exec. The supply-chain gate is the step above; zizmor is the workflow-SECURITY gate.
+        if: ${{ !cancelled() && steps.actionlint_verify.outcome == 'success' }}
+        continue-on-error: true
+        run: |
+          set +e
+          if [ ! -d .github/workflows ]; then echo "actionlint: no .github/workflows - nothing to lint."; exit 0; fi
+          "$RUNNER_TEMP/actionlint" -color
+          echo "actionlint exit=$? (informational; this step is continue-on-error - zizmor is the security gate)."
+
+      # ---------- ATT&CK enrichment (best-effort; self-skips green when the local-ai CLI is absent) ----------
+      - name: finding_to_attack ATT&CK enrichment (best-effort)
+        if: ${{ always() }}
+        continue-on-error: true
+        run: |
+          # Correlates the OSV + Semgrep findings above to MITRE ATT&CK via the local-ai CLI
+          # (finding_to_attack). That CLI is not present on a GitHub-hosted runner (nor on a
+          # NETWORK SERVICE self-hosted runner), so this step self-skips GREEN and prints the manual
+          # invocation; the OSV/Semgrep artifacts uploaded above are its input. LOCALAI_CLI is an
+          # instance value, hence config not a literal (H1).
+          # Inputs AND outputs live under RUNNER_TEMP, outside the checkout (the gate steps write them there).
+          cli="${LOCALAI_CLI:-}"
+          if [ -z "$cli" ] || [ ! -f "$cli" ]; then
+            echo "local-ai CLI not present on this runner - skipping ATT&CK enrichment (expected on a hosted/service-account runner)."
+            for f in "$RUNNER_TEMP/osv-results.json" "$RUNNER_TEMP/semgrep-results.sarif"; do
+              [ -f "$f" ] && echo "  manual: py <local-ai>/local_ai_cli.py finding_to_attack $(basename "$f")   (from this run's artifact)"
+            done
+            exit 0
+          fi
+          for f in "$RUNNER_TEMP/osv-results.json" "$RUNNER_TEMP/semgrep-results.sarif"; do
+            if [ -f "$f" ]; then py "$cli" finding_to_attack "$f" > "$RUNNER_TEMP/attack-$(basename "$f" | cut -d. -f1).json" || true; fi
+          done
+      - name: ATT&CK enrichment results (artifact)
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02   # v4.6.2 — SHA-pinned (C4)
+        with:
+          name: attack-enrichment
+          path: ${{ runner.temp }}/attack-*.json   # written under RUNNER_TEMP by the enrichment step, never in the checkout
+          if-no-files-found: ignore
