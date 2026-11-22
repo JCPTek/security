@@ -212,12 +212,12 @@ env:
   # per-project scope knob — the old CVE_TARGETS problem (a scan that walks only one project's closure)
   # cannot occur. NuGet needs a committed packages.lock.json (RestorePackagesWithLockFile=true) for
   # transitive coverage; without one only direct PackageReferences resolve. Versions verified current
-  # 2026-08-07 (google/osv-scanner v2.5.0) and 2026-10-29 (Semgrep OSS 1.181.0); Dependabot does not bump these: bump deliberately.
-  OSV_SCANNER_VERSION: "2.5.0"
+  # 2026-11-22 (google/osv-scanner v2.7.0, Semgrep OSS 1.184.0: the newest releases at least 14 days old); Dependabot does not bump these: bump deliberately.
+  OSV_SCANNER_VERSION: "2.7.0"
   # Fail at or above this CVSS band: any | low | medium | high | critical. `any` = fail on every finding
   # (the default and the right posture); a package group whose CVSS score is missing always counts as a finding.
   OSV_SEVERITY_THRESHOLD: any
-  SEMGREP_VERSION: "1.181.0"
+  SEMGREP_VERSION: "1.184.0"
   # Registry rulesets (space-separated, free, no token). The step ALSO auto-adds `--config .semgrep/` when the
   # repo has a .semgrep/ dir (the security-coding rollout drops canonical custom rules there), absent-safe.
   SEMGREP_CONFIG: p/default   # e.g. "p/security-audit p/secrets p/csharp p/javascript p/typescript"
@@ -234,15 +234,16 @@ env:
   # file is then counted clean. Both are config (H1); raise the timeout, never shrink the coverage.
   SEMGREP_TIMEOUT: "300"          # per-rule, per-file seconds. Integer.
   SEMGREP_TIMEOUT_THRESHOLD: "0"  # 0 = no limit on timed-out rules per file. Integer.
-  PSSA_VERSION: "1.24.0"      # PSScriptAnalyzer; only runs on repos containing .ps1/.psm1
+  PSSA_VERSION: "1.25.0"      # PSScriptAnalyzer; only runs on repos containing .ps1/.psm1
+  PSSA_SHA512: "e7fb573262e604bab29914ae62921d24b97c2f88b519b41277b403ef6ce163f14b7d1b36dc73449a68e5ae5a8d9502891b10c264131fd1813adf29bf131c1663"  # PSScriptAnalyzer.1.25.0.nupkg (= the PSGallery PackageHash)
   PSSA_SECURITY_RULES: ""     # '' => the curated security-rule default in the step; override to tune
   # ---- IaC / workflow SAST gate config (added 2026-08-08; H1 config-driven) ----
-  GITLEAKS_VERSION: "8.30.1"       # secret scanner; the SAME pin ci-selfhosted.yml uses. Verified current 2026-08-08
-  TRIVY_VERSION: "0.73.0"          # Trivy IaC/misconfig scanner. Verified current 2026-08-08
+  GITLEAKS_VERSION: "8.30.1"       # secret scanner; the SAME pin ci-selfhosted.yml uses. Verified current 2026-11-22
+  TRIVY_VERSION: "0.76.2"          # Trivy IaC/misconfig scanner. Verified current 2026-11-22
   TRIVY_SEVERITY: "HIGH,CRITICAL"  # comma-separated Trivy severities that FAIL the config gate
-  ZIZMOR_VERSION: "1.29.0"         # zizmor GitHub Actions workflow-security auditor. Verified current 2026-08-08
+  ZIZMOR_VERSION: "1.32.0"         # zizmor GitHub Actions workflow-security auditor. Verified current 2026-11-22
   ZIZMOR_MIN_SEVERITY: medium      # gate at/above this zizmor severity; 'medium' catches template-injection,
-                                   # unpinned-uses AND artipacked. VERIFIED against zizmor 1.29.0, do not assume
+                                   # unpinned-uses AND artipacked. VERIFIED against zizmor 1.32.0, do not assume
                                    # otherwise: its unpinned-uses policy is BLANKET - `actions/checkout@v4` is a HIGH
                                    # finding just like any third-party tag, so EVERY `uses:` below is pinned to a
                                    # commit SHA; and artipacked (medium) fires on any checkout omitting
@@ -266,12 +267,12 @@ env:
   #      downloading the asset and hashing it.
   GITLEAKS_SHA256: "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"      # gitleaks_8.30.1_linux_x64.tar.gz
   GITLEAKS_SHA256_ARM64: "e4a487ee7ccd7d3a7f7ec08657610aa3606637dab924210b3aee62570fb4b080"  # gitleaks_8.30.1_linux_arm64.tar.gz
-  OSV_SCANNER_SHA256: "edcfc41d257db36148f065055655fe3fcfc434b0b423ea67468a84c207524e0c"   # osv-scanner_linux_amd64 (v2.5.0)
-  OSV_SCANNER_SHA256_ARM64: "fe152e1a546af223e6c557cc3111a8bb3e5dc02fcbf7dbe95d26567c0f0041f2"  # osv-scanner_linux_arm64 (v2.5.0)
-  TRIVY_SHA256: "2edd39da482bb4e9831962487b68f68e3928ec3137794757f54d00383d79547b"         # trivy_0.73.0_Linux-64bit.tar.gz
-  TRIVY_SHA256_ARM64: "13833d97e8a1a5367471c372a173180157f593bece570e20d5d925fef552f5dd"   # trivy_0.73.0_Linux-ARM64.tar.gz
-  ZIZMOR_SHA256: "dd96df044a6e8538d5f423790f453bdd03d49e5b2bcc38214acc41a2f1297839"        # zizmor-x86_64-unknown-linux-gnu.tar.gz (v1.29.0)
-  ZIZMOR_SHA256_ARM64: "415eaa7c0a06479a701b8e44a3e812c1047decc848ec4bede7bd6bbf49f22d20"  # zizmor-aarch64-unknown-linux-gnu.tar.gz (v1.29.0)
+  OSV_SCANNER_SHA256: "160c6253e2922e9e0a6a9771c5c4c40a4b3c6090b34a3cdd5e80c96cc2e4218b"   # osv-scanner_linux_amd64 (v2.7.0)
+  OSV_SCANNER_SHA256_ARM64: "4061ef4c021ed3c47f203b818f337e351336cc5cd67c0274fc36bd1dfc728dd7"  # osv-scanner_linux_arm64 (v2.7.0)
+  TRIVY_SHA256: "bc0fc726e017b8927a62b2d3531d7a84ee01769daf5c99ed866dced54089fdbf"         # trivy_0.76.2_Linux-64bit.tar.gz
+  TRIVY_SHA256_ARM64: "ab9d51f86e6a5fb936f605faff6b593ac51bc378fff4d3e8b9d58358b9c367c3"   # trivy_0.76.2_Linux-ARM64.tar.gz
+  ZIZMOR_SHA256: "bb110cc765eca9cd7efb2e284a956be5974c60027b0970f16397d86208a9957b"        # zizmor-x86_64-unknown-linux-gnu.tar.gz (v1.32.0)
+  ZIZMOR_SHA256_ARM64: "cb152b207f815116d7fa1c1ee4614f61578803351395052908095e79adfd9fd0"  # zizmor-aarch64-unknown-linux-gnu.tar.gz (v1.32.0)
   ACTIONLINT_SHA256: "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8"    # actionlint_1.7.12_linux_amd64.tar.gz
   ACTIONLINT_SHA256_ARM64: "325e971b6ba9bfa504672e29be93c24981eeb1c07576d730e9f7c8805afff0c6"  # actionlint_1.7.12_linux_arm64.tar.gz
   # ---- DOWNLOAD RETRY: the TRANSFER is retried, never the verification. Every pinned-binary download in this
@@ -1264,7 +1265,7 @@ jobs:
               const id=piece.replace(/^ +| +$/g,"").split(" ")[0].replace(/^"+|"+$/g,"");
               if(/^[A-Za-z0-9._-]+$/.test(id)&&ids.indexOf(id)<0)ids.push(id)}
             return ids}
-          // Trivy 0.73.0 (pkg/iac/ignore/parse.go): a space-separated word that, past leading '#', '/' and '*', starts with
+          // Trivy 0.76.2 (pkg/iac/ignore/parse.go): a space-separated word that, past leading '#', '/' and '*', starts with
           // trivy: or tfsec: and carries ignore:<id>, the id ending at '['. An id of * matches every check, so it names no rule.
           function trivy(text){
             const ids=[];
@@ -1297,7 +1298,7 @@ jobs:
             // or suggestion takes the rule off the warnings-as-errors build.
             if((m=/^[\t ]*dotnet_diagnostic\.([^.\t =]+)\.severity[\t ]*=[\t ]*(?:none|silent|suggestion)(?![A-Za-z0-9_])/i.exec(text))&&!notScanner(m[1]))add("analyzer config severity",file,ln,m[1]);
             if((m=/^[\t ]*dotnet_analyzer_diagnostic\.(?:(category-[^.\t =]+)\.)?severity[\t ]*=[\t ]*(?:none|silent|suggestion)(?![A-Za-z0-9_])/i.exec(text)))add("analyzer config severity",file,ln,m[1]||null);
-            // zizmor 1.29.0 (crates/zizmor/src/finding/location.rs): its inline ignore comment, exactly that spacing, ids in brackets.
+            // zizmor 1.32.0 (crates/zizmor/src/finding/location.rs): its inline ignore comment, exactly that spacing, ids in brackets.
             if((ext===".yml"||ext===".yaml")&&(m=new RegExp("# zizmor: ignore\\[([^\\n]+)\\](?:"+WS+"+[^\\n]*)?$").exec(text)))
               for(const id of m[1].split(",").map(trim))if(id)add("zizmor inline ignore",file,ln,id);
             // PSScriptAnalyzer: the attribute's FIRST argument names the rule.
@@ -1341,7 +1342,7 @@ jobs:
               const commit=n===4||(n>4&&/^[0-9a-f]{40}$/i.test(f[0]));
               const file=f.slice(commit?1:0,n-2).join(":").replace(/\\/g,"/"),line=/^[0-9]+$/.test(f[n-1])?parseInt(f[n-1],10):f[n-1];
               add("gitleaks fingerprint",file,line,f[n-2],p+":"+(k+1)+" (fingerprint for "+file+":"+f[n-1]+")")})}
-          // The root .trivyignore: Trivy 0.73.0 (pkg/result/ignore.go) trims each line, skips a blank one and one starting
+          // The root .trivyignore: Trivy 0.76.2 (pkg/result/ignore.go) trims each line, skips a blank one and one starting
           // with '#', and drops every finding, of every scanner and in every file, whose id is the line's first field (exact
           // and case-sensitive: DS-0002 or its aliases DS002 and AVD-DS-0002, a CVE or GHSA id). The Trivy step hands Trivy
           // exactly this tracked file, so each id is listed by `rule:<id>` and `path:.trivyignore[:<line>]`.
@@ -2203,7 +2204,7 @@ jobs:
           exit 0
 
       # ---------- SCA: OSV-Scanner (google/osv-scanner; osv.dev = GHSA + NVD) ----------
-      - name: Install OSV-Scanner (version is config-driven — H1; verified current 2026-08-07)
+      - name: Install OSV-Scanner (version is config-driven — H1; verified current 2026-11-22)
         # Binary download (mirrors the gitleaks step) rather than google/osv-scanner-action: the reusable
         # workflow is job-level so its output cannot feed the enrichment step below, and its SARIF upload
         # defaults to GitHub code-scanning, which needs paid GHAS on a PRIVATE repo. The CLI gives a
@@ -2215,7 +2216,7 @@ jobs:
         # executable because its checksum did not match (exit 126). An unverified download is never executed.
         if: ${{ !cancelled() }}
         run: |
-          ver="${OSV_SCANNER_VERSION:-2.5.0}"
+          ver="${OSV_SCANNER_VERSION:-2.7.0}"
           # Release asset AND pin by RUNNER_ARCH (see the env block); any other architecture fails closed
           # BEFORE downloading.
           case "${RUNNER_ARCH:-}" in
@@ -2248,7 +2249,7 @@ jobs:
           osv_out="$RUNNER_TEMP/osv-results.json"
           "$RUNNER_TEMP/osv-scanner" scan source -r . --allow-no-lockfiles --format json --output-file "$osv_out"
           rc=$?
-          # Exit codes verified with v2.5.0: 0 = no known vulns; 1 = vulnerabilities found; anything
+          # Exit codes verified with v2.5.0 and v2.7.0: 0 = no known vulns; 1 = vulnerabilities found; anything
           # else (127/128 ...) = the scan could not run. --allow-no-lockfiles keeps a repo with no
           # manifests (a PowerShell-only repo) at exit 0 rather than erroring. Three outcomes kept
           # permanently distinct, never collapsed (C3/C5): clean -> pass, findings -> evaluate vs the
@@ -2343,35 +2344,34 @@ jobs:
           # pip config file can add a requirement or an index; the venv is a NEW directory (mktemp), never one an
           # earlier run left behind.
           sg_req="$RUNNER_TEMP/semgrep-requirements.txt"
-          sg_ver="${SEMGREP_VERSION:-1.181.0}"
+          sg_ver="${SEMGREP_VERSION:-1.184.0}"
           cat > "$sg_req" <<'SEMGREP_REQUIREMENTS_TXT'
-          # Semgrep for the CI templates' SAST gate: semgrep 1.181.0 and EVERY transitive dependency, hash-pinned.
-          # Generated by scripts/semgrep-requirements.py on 2026-10-29 (cutoff 2026-10-15T00:00:00Z): every file below,
-          # except the C3 security fixes listed next, was uploaded to PyPI before the cutoff, so every other pin is at
-          # least 14 days old, and every hash was confirmed against PyPI's JSON API for that release. Wheels only, for
-          # Linux x86_64 and aarch64 (manylinux) and Windows x86_64 under CPython 3.10 to 3.14; markers select the
-          # per-platform pins. C3's security-fix exception (a release that fixes a published advisory, every file at
-          # least 72 hours old when generated; the PR that added it carries the decision note):
-          #   certifi 2026.10.19, uploaded 2026-10-20T02:24:15Z, fixes PYSEC-2026-4320
+          # Semgrep for the CI templates' SAST gate: semgrep 1.184.0 and EVERY transitive dependency, hash-pinned.
+          # Generated by scripts/semgrep-requirements.py on 2026-11-22 (cutoff 2026-11-08T00:00:00Z): every file below was
+          # uploaded to PyPI before the cutoff, so every pin is at least 14 days old, and every hash was
+          # confirmed against PyPI's JSON API for that release. Wheels only, for Linux x86_64 and aarch64
+          # (manylinux) and Windows x86_64 under CPython 3.10 to 3.14; markers select the per-platform pins.
           # Install into a FRESH virtual environment, as the templates do:
           #   python -m pip install --require-hashes --only-binary :all: -r semgrep-requirements.txt
           # The CI templates carry this list EMBEDDED in their Semgrep install step; adopting repositories
           # commit no copy. Never edit it or a block by hand: regenerate it, run the script with
           # --rewrite-blocks, and bump SEMGREP_VERSION with it.
-          # Review by: 2026-11-28T00:00:00Z. After that date the templates' Semgrep step warns that this list is due
+          # Review by: 2026-12-22T00:00:00Z. After that date the templates' Semgrep step warns that this list is due
           # for regeneration (its OSV-Scanner baseline in dev-standards expires then).
           annotated-types==0.8.0 \
               --hash=sha256:f072f4d804ea359e4eaf198b1af7a8b0943881a87f31bb764f8bf219bb9419e0
-          anyio==4.15.1 \
-              --hash=sha256:6152fdbbf9a77fdec97731721bebf7c4c44f7c29b424b0065826173efc7ed101
+          anyio==4.16.0 \
+              --hash=sha256:c66ae634e0b8228396b801741beb3294326d4b6102f7bba4041c0dfb58c29026
           attrs==26.1.0 \
               --hash=sha256:c647aa4a12dfbad9333ca4e71fe62ddc36f4e63b2d260a37a8b83d2f043ac309
           boltons==21.0.0 \
               --hash=sha256:b9bb7b58b2b420bbe11a6025fdef6d3e5edc9f76a42fb467afe7ca212ef9948b
-          bracex==3.1 \
+          bracex==3.1 ; python_full_version < '3.11' \
               --hash=sha256:52002b8455658c21f3b6e5eb0f662b57ec9085f42709e58bc86eeab5bc4c37d7
-          certifi==2026.10.19 \
-              --hash=sha256:42d35340cc5b9ba78e818ddbff0c5b1c2b779de448a340fd1b989f5fa8670e1b
+          bracex==3.2.2 ; python_full_version >= '3.11' \
+              --hash=sha256:284d59c4656e5a0421ff691402074bd5847049d50410535764a2c522a47095bc
+          certifi==2026.10.23 \
+              --hash=sha256:e9b54de76e530bb6cf0ccd036787103acb58fd42ba930ea8bf948ddbaa2f61d1
           cffi==2.1.1 ; platform_python_implementation != 'PyPy' \
               --hash=sha256:194cffa889098ced9976c3fc6340305e43f6303657d298da55366907c05c22d6 \
               --hash=sha256:1aa5645c30469b09530c4ebca77ebf8f17618293c58f8549cb1a543a50236e7d \
@@ -2435,8 +2435,8 @@ jobs:
               --hash=sha256:ab0a83c37c9789dce658a67a9a80eafaa113c9ec37c5a9d950ff5480542a062d
           glom==25.12.0 \
               --hash=sha256:b9f21e77f71a6576a43864e85066b8cc3f0f778d0d50961563f8981377a6dcb1
-          googleapis-common-protos==1.75.5 \
-              --hash=sha256:d7285525c23039db98f2463e6d5a4f9b958b94d497f03a844ece3259c4e72d5d
+          googleapis-common-protos==1.76.0 \
+              --hash=sha256:59e13344a9f3651aa201a03e2bee815a3bf43a4baf1f9ff8a9b62a840ce25fac
           h11==0.16.0 \
               --hash=sha256:63cf8bbe7522de3bf65932fda1d9c2772064ffb3dae62d55932da54b31cb6c86
           httpcore==1.0.9 \
@@ -2488,38 +2488,42 @@ jobs:
               --hash=sha256:77179e006c476e69bf8e8ce866640091ec42e1beb80b213c3900006ecfba6901 \
               --hash=sha256:e2afbae9b8e1825e3529f88d514754e094278bb95eadc0e199751cdd9a2e82a2 \
               --hash=sha256:e9db7e292e0ab79dd108d7f1a94fe31601ce1ee3f7b79e0692043423020b0593
-          pycparser==3.11 ; implementation_name != 'PyPy' and platform_python_implementation != 'PyPy' \
+          pycparser==3.11 ; python_full_version < '3.11' and implementation_name != 'PyPy' and platform_python_implementation != 'PyPy' \
               --hash=sha256:51d5a8ba2be0bbe440b99d2112604c95bbbc3c2748a64260186c541e1729cd80
-          pydantic==2.14.1 \
-              --hash=sha256:9195d967ec791692a04438115466764fb8b9a27b31f14a760437694f40d6b454
-          pydantic-core==2.50.1 \
-              --hash=sha256:0036473f5583e6a60e50b8b21651511564277a3f05cc5dab8cf579f552cd5f6c \
-              --hash=sha256:0048b6dddc8ef4b64fccaad878bd143b0c3882ea9936279dc11d613f6b7dd1bc \
-              --hash=sha256:132529c83901437ff642f585216831bf5fd7a91df66829907e155192ead62498 \
-              --hash=sha256:17e722e156d0444ecaefbe640bdb60928752bf2013e2b7a11cdb099aaae19bec \
-              --hash=sha256:2eedf82ee4753cdab8e50044c6bd569577eebc3859b11fecf4eb9223761ff966 \
-              --hash=sha256:3aa9de446b793de2beb6fa2d9d0961803126c4e2a99c2f25ab59b9fd6ea125c0 \
-              --hash=sha256:409e0ea40ec30d9158f33574fd758e689f6045a0f2596701828c27816ca9687d \
-              --hash=sha256:42b54c2c90ad348b5e3a85e03e715d572c1fde357ef104cdfe3b03b697a404ea \
-              --hash=sha256:7816e98acc08119dc0f340ab167048ecc54126316330c1f0caf7c6756c88e28f \
-              --hash=sha256:8812592c85d0edf423f10eadcef42716d71e8219085ad9e85b775057b7306133 \
-              --hash=sha256:93ba4e9d8210d941c200431a56b2c0400b131865947903937ed3ec5404307d2e \
-              --hash=sha256:94be440c03fede26969a5ce75468e0e6a9927a1b46d9b679ee8adc1b057b0350 \
-              --hash=sha256:c18db21573bd2c6489f9a544b7499f0df2853958c568e5e783536ee1f690af41 \
-              --hash=sha256:d32f3acc081cc3923386d88f422cde8892335e95f034e0104bb4cf9310d9915f \
-              --hash=sha256:f77ac30b19221cd9bd3fcfa3d4614eff93140d0572ab730cded17b64adca05f3
+          pycparser==3.12 ; python_full_version >= '3.11' and implementation_name != 'PyPy' and platform_python_implementation != 'PyPy' \
+              --hash=sha256:a076f3f489b39b43ed13563a1dafe42447445bec2e294154ec5c57fcdda4c85e
+          pydantic==2.14.3 \
+              --hash=sha256:3f7b347782ab7e4cf4c798496ae3a82787d9f21ec12676a9c564355eeef8daa8
+          pydantic-core==2.50.4 \
+              --hash=sha256:0574866e05f6adeecc520d87e87dd06210c0a51706341f6ef8421572f5a64444 \
+              --hash=sha256:15bece43a02ad543c621c8305e67dedb5f27d378c5ba741e5a2c36523f8ef37f \
+              --hash=sha256:16902a147b3da4840612164a5e67947104d63e978f7a57c395877a5e26690b9c \
+              --hash=sha256:30d4dc35bc0eea52202a90b3820445ee0072c820241bfa710a623a078c9b267b \
+              --hash=sha256:4c29b8f2d6417069bb1f257e6b9113f5d64dc2f554cc200ea90b4fe2c5cdb733 \
+              --hash=sha256:70dbc9f83c41f37a4faa62dae5203853847223a891da446f48ef2efcfd5df806 \
+              --hash=sha256:a9ee990bf2cfbd81574c5d4f9f6c9d480a14b5b43d2c4f2ca13f4c6f48089394 \
+              --hash=sha256:b0cdb655fbd1562c2dfc9986f9103a106f7058cd0915afc6e656d4b1d73f3387 \
+              --hash=sha256:c4c5a1770ecfe8bdb6c6f09f8d81ea4de04f7efb012fac1efa4ad315dccc1fd1 \
+              --hash=sha256:c81d98e27d9d9261909dcccab1ba5d6ea1c98b0bb9470e368604614fd1d36ddd \
+              --hash=sha256:e512c75ec5cf4475c1aa50ad975ecdf253f4963b06e152e1a11edd6de4010753 \
+              --hash=sha256:ea2f61b0bc12f3592288503961b764579dea0658852d96a0b3d823614d808821 \
+              --hash=sha256:ed9c0b6f236648dbf30d57e9f57e1f74878caafa04833a19f529b5ba5164b7a8 \
+              --hash=sha256:f1d62fb172db35c6478c9323da34ff37d1f3d37d7d44337a9d94ba8c583e5730 \
+              --hash=sha256:fb2bb5b557080da398b866408117d98fe9731a12334afd0cdff221b458cdc5dc
           pydantic-settings==2.15.0 ; python_full_version < '3.11' \
               --hash=sha256:0ba092c291c94baceb5eff768aa0d56400a457585bc0175925a5a5510303da42
-          pydantic-settings==2.16.0 ; python_full_version >= '3.11' \
-              --hash=sha256:7e73acf7f61936a15e5a3b6eedaea29f133357faf7272f2607ba479b049dd7f2
+          pydantic-settings==2.16.2 ; python_full_version >= '3.11' \
+              --hash=sha256:8d523e5c129b097686bde019bd6109bff53f4c8c3f63f1ddf9933ffa42e5ab4f
           pygments==2.21.0 \
               --hash=sha256:2363c69b61c4a97c838da3b130dcd6468f4848992b21a82f2a63ec34377137d9
           pyjwt==2.15.1 \
               --hash=sha256:42d59d631f7768a1028a64c7ff581a9bf7519804daf91fc5b6c56e30eec5e193
           python-dotenv==1.2.4 \
               --hash=sha256:42269a8a5b3fd54ffa6f3d84b18abed50064717576b4ecf03dc4a55d8aa04fdc
-          python-multipart==0.0.32 \
+          python-multipart==0.0.32 ; python_full_version < '3.11' \
               --hash=sha256:ff6d3f776f16878c894e52e107296ffc890e913c611b1a4ec6c44e2821fe2e23
+          python-multipart==0.0.33 ; python_full_version >= '3.11' \
+              --hash=sha256:8f16c07b36add9da6b2ee87d3efcaf0a45a6de9c3d0a5dd94e9ccf7675a7bc45
           pywin32==311 ; sys_platform == 'win32' \
               --hash=sha256:3aca44c046bd2ed8c90de9cb8427f581c479e594e99b5c0bb19b29c10fd6cb87 \
               --hash=sha256:3ce80b34b22b17ccbd937a6e78e7225d80c52f5ab9940fe0506a1a16f3dab503 \
@@ -2581,16 +2585,20 @@ jobs:
               --hash=sha256:ef71831bd61fbdb7aa0399d5c4da06bea37107ab5c79ff884cc07f2450910262
           semantic-version==2.10.0 \
               --hash=sha256:de78a3b8e0feda74cabc54aab2da702113e33ac9d9eb9d2389bcf1f58b7d9177
-          semgrep==1.181.0 \
-              --hash=sha256:6dedd7d72dd7f7bd314439f469e143d57d84508c57c29246793378cccc2b90dc \
-              --hash=sha256:c142ec04a2ed144970cb0a92f6877651dd3c088505eec737bb7f4db7ae5f0ffa \
-              --hash=sha256:c3d7295bfd26f994231d82145888bd0a73ef0ad66ffb0c0341f0350a90ac3136
-          sse-starlette==3.5.0 \
-              --hash=sha256:3e6e1070df3f0f5d9cea81496de92dbb72f6721871d99748ece67441dd8b7997
+          semgrep==1.184.0 \
+              --hash=sha256:3c86b2961b4663d1338fb965de038c7869571661971b78e18e9346ab57e1e20a \
+              --hash=sha256:d847abb8fb6fdde77d9e30a6bc869dbfcb68eff4142dcd77897c52635a7600d9 \
+              --hash=sha256:f794d7c6d33126b6881f80d069583ef35b52bd796d882a5fa249ce1124aba3f3
+          sse-starlette==3.5.1 ; python_full_version < '3.11' \
+              --hash=sha256:a6cdcfec47b952911b1d99a7b8056429b5984039b875bf6575174220364b551f
+          sse-starlette==3.7.0 ; python_full_version >= '3.11' \
+              --hash=sha256:f1d3136caa12d129284fca3d2ded79bc9af943320b6472712955fea52a6d3eea
           starlette==1.7.0 ; python_full_version < '3.11' \
               --hash=sha256:67f8e99895493dd2911a03f11314af6ceebeae4e704bb9f43dfc6a9db151c93e
-          starlette==1.8.0 ; python_full_version >= '3.11' \
-              --hash=sha256:dfdd6b29c26483288088d990eee59631dedadd66ce20d203402a7ca8e3c4656f
+          starlette==1.10.0 ; python_full_version >= '3.11' \
+              --hash=sha256:478c0ab3b4ced6e82719849c118fa406f0278a3499c1a898cd15cd31bdc38ce4
+          structlog==26.1.0 \
+              --hash=sha256:e081a26d6c373e6d201eca24eede26d8ffab07f88f477822e679183428d3d91e
           tomli==2.4.1 \
               --hash=sha256:01f520d4f53ef97964a240a035ec2a869fe1a37dde002b57ebc4417a27ccd853 \
               --hash=sha256:0d85819802132122da43cb86656f8d1f8c6587d54ae7dcaf30e90533028b49fe \
@@ -2607,8 +2615,8 @@ jobs:
               --hash=sha256:ff18e6a727ee0ab0388507b89d1bc6a22b138d1e2fa56d1ad494586d61d2eae9
           typing-extensions==4.16.0 \
               --hash=sha256:481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8
-          typing-inspection==0.4.4 \
-              --hash=sha256:65b8397ba37ccbce054456aaccddfc91e6e3083c92824df348d96ca832f3f147
+          typing-inspection==0.4.5 \
+              --hash=sha256:bc210535442b39e1bf2805e0c7a17dfd6a4ace760c84c7f7d16245d23a6b1c39
           urllib3==2.8.0 \
               --hash=sha256:0cf3cae568d36aa9576b28dfb35f11328f1cb974ca7647d9475ebb86c75ac6e3
           uvicorn==0.54.0 ; sys_platform != 'emscripten' \
@@ -2632,8 +2640,8 @@ jobs:
               --hash=sha256:e1a4120ae5705f673727d3253de3ed0e016f7cd78dc463db1b31e2463e1f3cf6 \
               --hash=sha256:e71d5c6ebac14875668a1e90baf2ea0ef5b7ac7918355850c0908ae82bcb297c \
               --hash=sha256:f9b2601381be482f70e5d1051a5965c25fb3625455a2bf520b5a077b22afb775
-          zipp==4.1.1 \
-              --hash=sha256:8979f52d874162f485ff2981e3891f3a3317b7a3dd43ff1e1775b9304f307a9c
+          zipp==4.1.2 \
+              --hash=sha256:b30cb6cd253122169c47de245ca24a86bac2a5d3802ba15bf7ba6414eb9e144d
           SEMGREP_REQUIREMENTS_TXT
           # The list's review-by date (its OSV-Scanner baseline in dev-standards expires then): a warning after it,
           # so a repository that has not re-synced this step since sees that its pins are due, never a failure.
@@ -2860,8 +2868,28 @@ jobs:
           $ps1 = Get-ChildItem -Path . -Recurse -Include *.ps1,*.psm1,*.psd1 -File -ErrorAction SilentlyContinue |
             Where-Object { $_.FullName -notmatch '[\\/](\.git|node_modules|bin|obj|dist|build|packages|Old)[\\/]' }
           if (-not $ps1) { Write-Host 'PSScriptAnalyzer: no PowerShell files in this repo - nothing to scan.'; exit 0 }
-          $ver = if ($env:PSSA_VERSION) { $env:PSSA_VERSION } else { '1.24.0' }
-          Install-Module PSScriptAnalyzer -RequiredVersion $ver -Scope CurrentUser -Force -SkipPublisherCheck
+          $ver = if ($env:PSSA_VERSION) { $env:PSSA_VERSION } else { '1.25.0' }
+          # Verified install (C4/C5, NOTES.md: security/pssa-install): the PSGallery package pinned by SHA-512, unpacked into a
+          # fresh RUNNER_TEMP folder and imported by path; never a module already on the runner, never Install-Module.
+          $want = "$env:PSSA_SHA512".ToLowerInvariant()
+          if ($want -notmatch '^[0-9a-f]{128}$') { Write-Host "::error::PSScriptAnalyzer COULD NOT RUN: PSSA_SHA512 is missing or malformed, so the $ver package cannot be verified. Refusing to install it (C4/C5)."; exit 2 }
+          $pd = Join-Path $env:RUNNER_TEMP ('pssa-' + [guid]::NewGuid().ToString('N')); $md = Join-Path $pd 'm'; $pkg = Join-Path $pd 'pssa.zip'
+          New-Item -ItemType Directory -Path $md -Force | Out-Null
+          $curl = if ($env:SystemRoot) { Join-Path $env:SystemRoot 'System32\curl.exe' } else { 'curl' }
+          & $curl -sSfL --connect-timeout 10 --retry 3 --retry-all-errors --retry-delay 2 --retry-max-time 60 -o $pkg "https://www.powershellgallery.com/api/v2/package/PSScriptAnalyzer/$ver"
+          if ($LASTEXITCODE -ne 0) { Write-Host "::error::PSScriptAnalyzer COULD NOT RUN: downloading the $ver package failed (curl exit $LASTEXITCODE). This is NOT a finding."; exit 2 }
+          $got = (Get-FileHash -Algorithm SHA512 -LiteralPath $pkg).Hash.ToLowerInvariant()
+          if ($got -ne $want) { Write-Host "::error::PSScriptAnalyzer COULD NOT RUN: checksum mismatch for the $ver package: expected SHA-512 $want got $got. Refusing to load an unverified module (C4/C5). If PSSA_VERSION was bumped, update PSSA_SHA512."; exit 2 }
+          Expand-Archive -LiteralPath $pkg -DestinationPath $md
+          if ($PSVersionTable.PSEdition -eq 'Desktop' -or $IsWindows) {
+            foreach ($f in 'PSScriptAnalyzer.psd1', 'PSScriptAnalyzer.psm1', 'Microsoft.Windows.PowerShell.ScriptAnalyzer.dll') {
+              $sig = Get-AuthenticodeSignature -LiteralPath (Join-Path $md $f)
+              if ($sig.Status -ne 'Valid' -or "$($sig.SignerCertificate.Subject)" -notmatch '(^|, )CN=Microsoft Corporation(,|$)') { Write-Host "::error::PSScriptAnalyzer COULD NOT RUN: $f is not validly signed by Microsoft Corporation ($($sig.Status)). Refusing to load it (C4/C5)."; exit 2 }
+            }
+          }
+          $pssa = @(Import-Module (Join-Path $md 'PSScriptAnalyzer.psd1') -Force -PassThru | Where-Object { $_.Name -eq 'PSScriptAnalyzer' })
+          if ($pssa.Count -ne 1 -or "$($pssa[0].Version)" -ne $ver) { Write-Host "::error::PSScriptAnalyzer COULD NOT RUN: the verified package did not load as PSScriptAnalyzer $ver."; exit 2 }
+          $isa = $pssa[0].ExportedCommands['Invoke-ScriptAnalyzer']
           # Curated SECURITY rules only (config-driven). Any finding from these fails the build; this is
           # PowerShell's only automated coverage, so it is a real gate, not a dashboard. DC-bound .ps1
           # headed for NETLOGON/SYSVOL additionally pass local validate_ps_clm (CLM/StrictMode) - that
@@ -2874,7 +2902,7 @@ jobs:
           # LOADS a PSScriptAnalyzerSettings.psd1 it finds in the scanned path. Its CustomRulePath modules are then
           # imported (repository code running inside this gate) and its ExcludeRules and Severity merge in, so a
           # pull request could switch the gate off. An explicit -Settings value turns that discovery off.
-          $findings = @(Invoke-ScriptAnalyzer -Path . -Recurse -Settings @{ IncludeRules = @($rules) } -ErrorAction Continue)
+          $findings = @(& $isa -Path . -Recurse -Settings @{ IncludeRules = @($rules) } -ErrorAction Continue)
           if ($findings.Count) {
             $findings | ForEach-Object { Write-Host ("{0}:{1} {2} - {3}" -f $_.ScriptName, $_.Line, $_.RuleName, $_.Message) }
             Write-Host "::error::PSScriptAnalyzer found $($findings.Count) PowerShell security finding(s) (C5). Fix them, or record a decision note."
@@ -2892,7 +2920,7 @@ jobs:
         if: ${{ !cancelled() }}
         run: |
           set -e
-          ver="${TRIVY_VERSION:-0.73.0}"
+          ver="${TRIVY_VERSION:-0.76.2}"
           # Release asset AND pin by RUNNER_ARCH (see the env block); any other architecture fails closed
           # BEFORE downloading.
           case "${RUNNER_ARCH:-}" in
@@ -2927,7 +2955,7 @@ jobs:
           # as the INDEX holds it, when the index holds a regular file at exactly that path (the inventory step lists each
           # of its ids against section 5), and an EMPTY file otherwise, so nothing left on disk adds an id. Both are under
           # RUNNER_TEMP, outside the checkout. Empty, not absent: an explicit --ignorefile that does not exist is a fatal
-          # flag error (measured on Trivy 0.73.0). git runs in the inventory step's environment (no system or global
+          # flag error (measured on Trivy 0.76.2). git runs in the inventory step's environment (no system or global
           # config, replace objects off, safe.directory = this workspace) with constant arguments and an object id it
           # printed itself.
           tv_cfg="$RUNNER_TEMP/trivy-empty-config.yaml"; tv_ign="$RUNNER_TEMP/trivy-ignorefile"; tv_idx="$RUNNER_TEMP/trivy-ignorefile-entry"
@@ -2997,7 +3025,7 @@ jobs:
           # by content. Download failure or checksum mismatch fails the gate CLOSED - a workflow-security gate
           # that could not run is not a pass.
           set -e
-          ver="${ZIZMOR_VERSION:-1.29.0}"
+          ver="${ZIZMOR_VERSION:-1.32.0}"
           # Release asset AND pin by RUNNER_ARCH (see the env block); any other architecture fails closed
           # BEFORE downloading.
           case "${RUNNER_ARCH:-}" in
@@ -3024,14 +3052,14 @@ jobs:
           # token-free (offline audits cover unpinned-uses + template-injection). The SARIF goes to RUNNER_TEMP,
           # outside the checkout; the reader below and the artifact use the same path.
           zz_out="$RUNNER_TEMP/zizmor-results.sarif"
-          # --no-config: zizmor 1.29.0 otherwise loads .github/zizmor.yml or zizmor.yml (either extension) from the repository
+          # --no-config: zizmor 1.32.0 otherwise loads .github/zizmor.yml or zizmor.yml (either extension) from the repository
           # root, and that file can turn audits off and ignore findings by file and line (the Suppression inventory step
           # refuses it, C5). Verified: a committed .github/zizmor.yml disabling unpinned-uses hides that finding, and
           # --no-config brings it back.
           "$RUNNER_TEMP/zizmor" --no-config --no-online-audits --min-severity "$lvl" --format sarif .github/workflows > "$zz_out" 2>/dev/null
           rc=$?
           # CI-audit HIGH#3: fail on the EXIT CODE first, BEFORE parsing the SARIF. zizmor's contract in
-          # --format sarif mode (verified against 1.29.0): 0 = successful audit (any findings are IN the SARIF -
+          # --format sarif mode (verified against 1.32.0): 0 = successful audit (any findings are IN the SARIF -
           # the 11-14 finding codes are suppressed under SARIF output); 1 = audit error; 2 = bad args; 3 = no
           # inputs. So ANY nonzero here means the AUDIT ITSELF FAILED, not "found issues" - a valid-but-empty
           # SARIF emitted alongside an audit error would otherwise read clean. Fail closed (C5).
